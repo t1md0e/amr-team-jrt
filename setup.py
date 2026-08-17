@@ -24,6 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'path_planner = final_project.path_planner:main',
+            'potential_field_navigator = final_project.potential_field_navigator:main'
         ],
     },
 )

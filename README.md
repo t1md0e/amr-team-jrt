@@ -1,83 +1,3 @@
-
-# AMR FINAL PROJECT
-
-
-## Important Information
-
-| Item | Details |
-|------|---------|
-| Assignment Release | 1 July 2026 |
-| Due Date | **28 September 2026, 23:59 CET** |
-| Repository Visibility | Public |
-| Team Size | 3–4 students |
-| Submission | Prepare a report with the format explained in class and Submit the GitHub repository URL on LEA |
-
-
-# Getting Started
-
-## Step 1
-
-Click **Use this template** (green button at the top of this page).
-
-## Step 2
-
-Create a new repository using the following naming convention:
-
-```
-amr-team-<team_name>
-```
-
-Replace '<team_name>' with your desired team name.
-
-## Step 3
-
-Set the repository visibility to **Public** and create the repository.
-
-## Step 4
-
-Invite your team members as collaborators to the repository.
-
-```
-Settings
-    ↓
-Collaborators
-    ↓
-Add people
-```
-
-## Step 5
-
-Clone your repository
-
-example:
-
-```bash
-git clone https://github.com/amr-team-<team_name>.git
-```
-
-## Finally
-
-Work collaboratively by splitting the tasks among team members and individually push your code to the repository.
-
-## Important Note
-
-- Team members work is evaluated based on your commit history, if  we do not see any commits from a team member then we cannot consider their contribution. 
-
-- You can use issue boards and other tools to create issues and pull requests to manage your work and better showcase collaboration.
-
-- Make sure you record almost every session because you need a working video to add into the report. Make sure to take screenshots, screenrecords etc to document your work in an effective manner.
-
-- The robots in the lab are prone to issues so finish everything on simulation as fast as you can and start testing as soon as you can, do not wait until the last moment.
-
-- Make sure to use only one branch to track all of your codes and also do not upload entire folders on to Github, use a gitignore and keep only required files on there.
-
-- Write a nice Readme file on how to use the codes and also explain your approach for the tasks and also any challenges you faced, Feel free to modify this file.
-
-- Ensure when leaving the lab you charge the robots for next team that is coming or if you are the last team unplug the robot, switch it off and then leave.
-
-- Feel free to post any issues you faced on LEA, always refer to the documentation when in confusion and retrace your steps.
----
-
 # AMR Project
 
 ## Project Objectives
@@ -101,3 +21,59 @@ In one of the course lectures, we discussed Monte Carlo localisation as a practi
 ### 3. Environment Exploration
 
 The final objective of the project is to incorporate an environment exploration functionality to the robot. This will have to be combined with a SLAM component, namely you will need your exploration component to select poses to explore and a SLAM component that will take care of actually creating a map. The exploration algorithm should ideally select poses at the map fringe (i.e. poses that are at the boundary between the explored and unexplored region), but you are free to explore different pose selection strategies in your implementation.
+
+## Setup
+
+- Clone the repository
+- Move the folder to your ROS2 workspace under `/src`
+- Run `colcon build` in the root of the workspace
+
+## Usage
+
+The package has the following nodes and scripts:
+
+- Task 1:
+  - `path_planner`
+  - `potential_field_navigator`
+- Task 2:
+- Task 3:
+- Additionally:
+  - `a_star.py` (supports `path_planner` node)
+
+### Node: `path_planner`
+
+Subscribes to:
+- `/odom` -> `nav_msgs/Odometry`
+- `/map` -> `nav_msgs/OccupancyGrid`
+- `/goal` -> `geometry_msgs/PoseStamped` (expects position in map frame)
+
+Publishes:
+- `/waypoint` -> `geometry_msgs/PoseStamped` (position in map frame)
+
+This node is responsible for finding a path between the robot's current position and a given goal position. It uses A* search to find an optimal path between the robot position from `/odom` and the goal position from `/goal`. It can only find a path if it is also given an occupancy grid through `/map`.
+
+After a path has been calculated, it samples waypoints from the path and publishes them to `/waypoint`. Only ever one waypoint at a time is published: At first, this is simply the first waypoint in the path. The node keeps track of the robot's position and publishes the next waypoint in the path once the current waypoint has been reached. Once the final waypoint (i.e. the goal) has been reached, the path is discarded and no new waypoint is published.
+
+If a new goal is published even though the goal has not been reached yet by the robot, the node will abandon the current path and search for a path to the new goal. The waypoints will start from the beginning again.
+
+If a new map is published even though the goal has not been reached yet by the robot, it will be saved and used for coordinate calculations, but no new path will be generated. It is therefore important that any grids published to `/map` maintain the same origin and resolution.
+
+### Node: `potential_field_navigator`
+
+Subscribes to:
+- `/odom` -> `nav_msgs/Odometry`
+- `/scan` -> `sensor_msgs/LaserScan`
+- `/waypoint` -> `geometry_msgs/PoseStamped` (position in map frame)
+
+Publishes:
+- `/cmd_vel` -> `geometry_msgs/Twist`
+
+This node is responsible for navigating the robot towards a given waypoint while avoiding obstacles. It uses potential-field based navigation move around obstacles detected by its Lidar sensor and toward a goal given by `/waypoint`.
+
+From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
+
+If the waypoint is reached, the robot rotates to the desired position and stops.
+
+### Script: `a_star.py`
+
+This script contains the class `OccupancyGridAStar`, which carries out A* search on an occupancy grid. It considers cells with an occupancy below 50 as free and considers both direct and diagonal neighbors of cells as successors. The used heuristic is Euclidean distance.

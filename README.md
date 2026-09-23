@@ -37,6 +37,8 @@ The package has the following nodes and scripts:
   - `potential_field_navigator`
 - Task 2:
 - Task 3:
+  - `slam_gmapping`
+  - `explorer`
 - Additionally:
   - `a_star.py` (supports `path_planner` node)
 
@@ -73,6 +75,20 @@ This node is responsible for navigating the robot towards a given waypoint while
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
 
 If the waypoint is reached, the robot rotates to the desired position and stops.
+
+### Node: `slam_gmapping`
+
+Subscribes to:
+- `/tf` -> `tf/tfMessage`
+- `/scan` -> `sensor_msgs/LaserScan`
+
+Publishes:
+- `/map_metadata` -> `nav_msgs/MapMetaData`
+- `/map` -> `nav_msgs/OccupancyGrid` (Get the map data from this topic, which is latched, and updated periodically)
+- `/~entropy` -> `std_msgs/Float64` (Estimate of the entropy of the distribution over the robot's pose (a higher value indicates greater uncertainty))
+
+TODO: description and source
+
 
 ### Script: `a_star.py`
 

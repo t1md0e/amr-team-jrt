@@ -53,6 +53,9 @@ class PotentialFieldNavigator(Node):
         self.goal_y = self.y
         self.goal_theta = self.theta
 
+        # Robot does not move before the first waypoint has been received
+        self.has_goal = False
+
         # Current attractive and repulsive velocities (base link frame)
         self.attraction = 0.0, 0.0
         self.repulsion = 0.0, 0.0
@@ -83,6 +86,7 @@ class PotentialFieldNavigator(Node):
         transform_quat = transform.transform.rotation
         transform_yaw = euler_from_quaternion([transform_quat.x, transform_quat.y, transform_quat.z, transform_quat.w])[2]
         self.goal_theta = math.atan2(math.sin(goal_yaw + transform_yaw), math.cos(goal_yaw + transform_yaw))
+        self.has_goal = True
 
     def update_obstacles(self, msg):
         """ Get obstacle distances from /scan topic and update repulsive velocity from obstacles """
@@ -96,8 +100,15 @@ class PotentialFieldNavigator(Node):
         coords_clean = coords_cart[np.isfinite(coords_cart).all(axis=1)]
         coords_transformed = apply_transform(coords_clean, self.laser_base_transform)
 
-        velocities = [self.get_repulsion(0.0, 0.0, p[0], p[1]) for p in coords_transformed]
-        self.repulsion = sum([v[0] for v in velocities]), sum([v[1] for v in velocities])
+        if len(coords_transformed) == 0:
+            self.repulsion = 0.0, 0.0
+            return
+
+        # Repulsive field depends on the minimum distance to an obstacle (closest scan point), summing over
+        # all scan points would count a wall many times and create local minima in front of every wall
+        distances = np.hypot(coords_transformed[:, 0], coords_transformed[:, 1])
+        closest = coords_transformed[np.argmin(distances)]
+        self.repulsion = self.get_repulsion(0.0, 0.0, closest[0], closest[1])
 
     def get_attraction(self, x, y):
         """ Calculate attractive velocity for a given point in world frame with respect to the goal position """
@@ -142,6 +153,11 @@ class PotentialFieldNavigator(Node):
 
         msg = Twist()
 
+        if not self.has_goal:
+            # Wait for the first waypoint
+            self.vel_pub.publish(msg)
+            return
+
         delta_x = self.goal_x - self.x
         delta_y = self.goal_y - self.y
         delta_theta = self.goal_theta - self.theta
@@ -185,6 +201,11 @@ class PotentialFieldNavigator(Node):
             # Final forward speed
             v_cmd = V_REF * turn_slow * obs_slow
             msg.linear.x = float(max(MIN_SPEED, min(MAX_SPEED, v_cmd)) * goal_slow)
+
+            # Rotate in place if the desired direction is to the side or behind, driving would lead to circles
+            ROTATE_IN_PLACE_ANGLE = math.pi / 2
+            if abs(desired_theta) > ROTATE_IN_PLACE_ANGLE:
+                msg.linear.x = 0.0
 
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 

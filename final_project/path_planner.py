@@ -3,6 +3,8 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile
+from rclpy.qos import DurabilityPolicy
 
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
@@ -21,7 +23,9 @@ from tf2_ros import TransformException
 
 from final_project.a_star import OccupancyGridAStar
 
-THRESHOLD_WAYPOINT = 0.1
+THRESHOLD_WAYPOINT = 0.1               # final waypoint (goal) needs to be reached exactly
+THRESHOLD_INTERMEDIATE_WAYPOINT = 0.3  # intermediate waypoints only need to be passed
+ROBOT_RADIUS = 0.4                     # obstacles are grown by this radius for path finding (configuration space)
 ZERO_REPLACEMENT = 1e-6
 
 class PathPlanner(Node):
@@ -32,6 +36,10 @@ class PathPlanner(Node):
         self.waypoint_pub = self.create_publisher(PoseStamped, '/waypoint', 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.update_pose, 10)
         self.map_sub = self.create_subscription(OccupancyGrid, '/map', self.update_map, 10)
+        # map_server publishes the map only once (transient local), SLAM publishes it periodically (volatile),
+        # a transient local subscription is not compatible with volatile publishers, so both are needed
+        map_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.latched_map_sub = self.create_subscription(OccupancyGrid, '/map', self.update_map, map_qos)
         self.goal_sub = self.create_subscription(PoseStamped, '/goal', self.update_goal, 10)
 
         # Current pose (odom frame) to be updated
@@ -80,8 +88,13 @@ class PathPlanner(Node):
         """ Find path to goal using A* algorithm """
         start = self.map_to_cell_coords(self.x, self.y)
         goal = self.map_to_cell_coords(self.goal_x, self.goal_y)
-        astar = OccupancyGridAStar(self.grid, start, goal)
-        self.path = self.get_sampled_path_in_map_coords(astar.search())
+        inflation_cells = int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution))
+        astar = OccupancyGridAStar(self.grid, start, goal, inflation_cells)
+        path = astar.search()
+        if not path:
+            # Start or goal can be too close to an obstacle, try again without keeping a distance
+            path = OccupancyGridAStar(self.grid, start, goal).search()
+        self.path = self.get_sampled_path_in_map_coords(path)
         self.current_waypoint = None
         if self.path:
             self.get_logger().info(f"Path found with {len(self.path)} waypoints")
@@ -160,7 +173,11 @@ class PathPlanner(Node):
             delta_y = point_y - self.y
 
             # Check whether current position is within radial threshold around waypoint position
-            pos_reached = (delta_x ** 2 + delta_y ** 2) < THRESHOLD_WAYPOINT ** 2
+            if self.current_waypoint < len(self.path) - 1:
+                threshold = THRESHOLD_INTERMEDIATE_WAYPOINT
+            else:
+                threshold = THRESHOLD_WAYPOINT
+            pos_reached = (delta_x ** 2 + delta_y ** 2) < threshold ** 2
 
             if pos_reached:
                 if self.current_waypoint < len(self.path) - 1: # Current waypoint is not goal

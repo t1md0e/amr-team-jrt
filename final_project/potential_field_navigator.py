@@ -178,9 +178,13 @@ class PotentialFieldNavigator(Node):
             rep_mag = math.hypot(self.repulsion[0], self.repulsion[1])
             obs_slow = 1.0 / (1.0 + OBS_SLOWDOWN_K * rep_mag)
 
+            # 3) Slow down close to the waypoint, otherwise the robot circles around it
+            GOAL_SLOWDOWN_DIST = 0.3    # distance at which slowing down starts (tune)
+            goal_slow = min(1.0, math.hypot(delta_x, delta_y) / GOAL_SLOWDOWN_DIST)
+
             # Final forward speed
             v_cmd = V_REF * turn_slow * obs_slow
-            msg.linear.x = float(max(MIN_SPEED, min(MAX_SPEED, v_cmd)))
+            msg.linear.x = float(max(MIN_SPEED, min(MAX_SPEED, v_cmd)) * goal_slow)
 
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 

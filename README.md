@@ -36,11 +36,18 @@ The package has the following nodes and scripts:
   - `path_planner`
   - `potential_field_navigator`
 - Task 2:
+  - `particle_filter`
 - Task 3:
   - `slam_gmapping`
   - `explorer`
 - Additionally:
   - `a_star.py` (supports `path_planner` node)
+
+The following launch files are available:
+
+- Task 2: `ros2 launch final_project localisation.launch.py map:=/path/to/map.yaml` (starts `map_server` and `particle_filter`)
+
+The launch file accepts `use_sim_time:=true` for running in simulation.
 
 ### Node: `path_planner`
 
@@ -75,6 +82,28 @@ This node is responsible for navigating the robot towards a given waypoint while
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
 
 If the waypoint is reached, the robot rotates to the desired position and stops.
+
+### Node: `particle_filter`
+
+Subscribes to:
+- `/odom` -> `nav_msgs/Odometry`
+- `/scan` -> `sensor_msgs/LaserScan`
+- `/map` -> `nav_msgs/OccupancyGrid` (transient local, e.g. from `map_server`)
+- `/initialpose` -> `geometry_msgs/PoseWithCovarianceStamped` (optional, e.g. from the 2D Pose Estimate widget in RViz)
+
+Publishes:
+- `/estimated_pose` -> `geometry_msgs/PoseWithCovarianceStamped` (position in map frame)
+- `/particles` -> `geometry_msgs/PoseArray` (for visualisation in RViz)
+- `/tf` -> transform `map` -> `odom`
+
+This node is responsible for localising the robot in a given map using Monte Carlo localisation, i.e. a particle filter. When the map is received, the particles are sampled uniformly over the free cells of the map (global localisation). If a pose is published to `/initialpose`, the particles are instead sampled from a Gaussian distribution around that pose.
+
+The filter is only updated once the robot has moved or rotated far enough. Every update consists of three steps:
+- Motion update: Every particle is moved by sampling from the odometry motion model (initial rotation, translation, final rotation, each under the influence of Gaussian noise).
+- Measurement update: For a subset of the laser beams, the expected range is calculated for every particle by casting a ray through the occupancy grid. The particle weight is the likelihood of the measured ranges, modelled as a Gaussian around the expected range mixed with a small probability for random measurements.
+- Resampling: The particles are sampled with replacement proportional to their weights. To recover from localisation failures (kidnapped robot problem), random particles are added if the short term average of the measurement likelihood drops below the long term average.
+
+The estimated pose is the weighted mean of the particles, its variance is published as covariance. The node also publishes the transform `map` -> `odom`, so that other nodes (e.g. `potential_field_navigator`) can transform between both frames.
 
 ### Node: `slam_gmapping`
 

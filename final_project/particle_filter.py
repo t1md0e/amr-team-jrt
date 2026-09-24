@@ -131,6 +131,10 @@ class ParticleFilter(Node):
         self.weights = np.full(NUM_PARTICLES, 1.0 / NUM_PARTICLES)
         self.w_slow = 0.0
         self.w_fast = 0.0
+
+        # Use the given pose immediately, otherwise map -> odom is only corrected once the robot moves
+        if self.prev_odom_pose is not None:
+            self.update_estimate()
         self.get_logger().info(f'\nParticles reinitialised around '
                                f'({msg.pose.pose.position.x:.2f}, {msg.pose.pose.position.y:.2f}, {theta:.2f})')
 

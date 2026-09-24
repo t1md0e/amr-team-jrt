@@ -61,9 +61,9 @@ class PathPlanner(Node):
         self.theta = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
 
     def update_goal(self, msg):
-        self.goal_x = msg.pose.pose.position.x
-        self.goal_y = msg.pose.pose.position.y
-        quaternion = msg.pose.pose.orientation
+        self.goal_x = msg.pose.position.x
+        self.goal_y = msg.pose.position.y
+        quaternion = msg.pose.orientation
         self.goal_theta = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
         if self.grid is not None:
             self.find_path()
@@ -142,7 +142,7 @@ class PathPlanner(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "map"
 
-        msg.pose.position = Point(point_x, point_y, 0.0)
+        msg.pose.position = Point(x=point_x, y=point_y, z=0.0)
         if self.current_waypoint == len(self.path) - 1:
             q = quaternion_from_euler(0.0, 0.0, self.goal_theta)
             msg.pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])

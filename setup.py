@@ -30,7 +30,8 @@ setup(
         'console_scripts': [
             'path_planner = final_project.path_planner:main',
             'potential_field_navigator = final_project.potential_field_navigator:main',
-            'particle_filter = final_project.particle_filter:main'
+            'particle_filter = final_project.particle_filter:main',
+            'explorer = final_project.explorer:main'
         ],
     },
 )

@@ -46,8 +46,9 @@ The package has the following nodes and scripts:
 The following launch files are available:
 
 - Task 2: `ros2 launch final_project localisation.launch.py map:=/path/to/map.yaml` (starts `map_server` and `particle_filter`)
+- Task 3: `ros2 launch final_project exploration.launch.py` (starts `slam_gmapping`, `explorer`, `path_planner` and `potential_field_navigator`)
 
-The launch file accepts `use_sim_time:=true` for running in simulation.
+Both launch files accept `use_sim_time:=true` for running in simulation.
 
 ### Node: `path_planner`
 
@@ -116,7 +117,27 @@ Publishes:
 - `/map` -> `nav_msgs/OccupancyGrid` (Get the map data from this topic, which is latched, and updated periodically)
 - `/~entropy` -> `std_msgs/Float64` (Estimate of the entropy of the distribution over the robot's pose (a higher value indicates greater uncertainty))
 
-TODO: description and source
+This node is responsible for creating a map of the environment while localising the robot in it (SLAM). It implements grid-based FastSLAM, i.e. a Rao-Blackwellised particle filter where every particle maintains its own occupancy grid map. It also publishes the transform `map` -> `odom`.
+
+Source: ROS2 port of gmapping (https://github.com/Project-MANAS/slam_gmapping, branch `eloquent-devel`), which needs to be cloned into the `/src` folder of the workspace next to this package, as there is no binary package for ROS2 Humble.
+
+### Node: `explorer`
+
+Subscribes to:
+- `/map` -> `nav_msgs/OccupancyGrid`
+- `/tf` -> transform `map` -> `base_link` (from `slam_gmapping`)
+
+Publishes:
+- `/goal` -> `geometry_msgs/PoseStamped` (position in map frame, used by `path_planner`)
+- `/waypoint` -> `geometry_msgs/PoseStamped` (only for the initial step, see below)
+
+This node is responsible for exploring the environment by selecting goals at the map fringe, i.e. free cells that are next to unknown cells. Fringe cells are grouped into connected regions, and only regions with a minimum size are considered. To make sure that the robot fits there, occupied cells are grown by the robot radius (configuration space) and only fringe cells that are still free are used as goals.
+
+The goal is the closest reachable fringe cell, which is found using the wavefront algorithm (breadth-first search over the free cells, starting at the robot position). The goal is published to `/goal`, so that `path_planner` and `potential_field_navigator` move the robot there.
+
+A new goal is selected if the current goal is reached, if the region around the goal has already been explored while driving there, or if the robot makes no progress towards the goal. In the last case, the goal is added to a blacklist and is not selected again. Once no reachable fringe is left, the exploration is finished.
+
+As the laser scanner is mounted at the front of the robot, the robot's own cell is still unknown at the start, so that A* can not find a path. In this case, the node first moves the robot forward by publishing a waypoint directly to `potential_field_navigator`.
 
 
 ### Script: `a_star.py`

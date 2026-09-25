@@ -1,0 +1,84 @@
+\documentclass[lettersize,journal]{IEEEtran}
+\usepackage[table]{xcolor}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage{subcaption}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{subfiles}
+\usepackage[hidelinks]{hyperref}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{pifont}
+\usepackage{float}
+\usepackage{algpseudocode}
+\usepackage{siunitx}
+\usepackage[framemethod=TikZ]{mdframed}
+
+\mdfdefinestyle{frameStyle}{%
+	roundcorner=5pt,
+	backgroundcolor=white}
+
+\renewcommand{\arraystretch}{1.5}
+\renewcommand{\vec}[1]{\mathbf{#1}}
+\newcommand{\cmark}{\ding{51}}%
+\newcommand{\xmark}{\ding{55}}%
+\newcolumntype{P}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{M}[1]{>{\centering\arraybackslash}m{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash\hspace{0pt}}m{#1}}
+
+\newtheorem{definition}{Definition}
+
+\algtext*{EndIf}
+\algtext*{EndFor}
+\algtext*{EndWhile}
+\algtext*{EndFunction}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+% updated with editorial comments 8/9/2021
+
+\begin{document}
+
+\title{Your Project Title}
+
+\author{Your Name
+        % <-this % stops a space
+\thanks{$^*$Submitted to the Department of Computer Science at Hochschule Bonn-Rhein-Sieg in partial fulfilment of the requirements for the degree of Master of Science in Autonomous Systems}
+\thanks{$^{\dagger}$Supervised by Supervisor 1 (Affiliation) and Supervisor 2 (Affiliation)}
+\thanks{$^{\ddagger}$Submitted in Month 20XX}} %
+% \thanks{Manuscript received October Day, 2022; revised Month Day, 2023.}}
+
+\markboth{R\&D Project Report, Master of Autonomous Systems, Hochschule Bonn-Rhein-Sieg}%
+{Your Name: Your Project Title}
+
+\maketitle
+
+\subfile{subfiles/abstract}
+
+\begin{IEEEkeywords}
+Write up to three keywords about your work.
+\end{IEEEkeywords}
+
+% Add your content by filling out these
+\subfile{subfiles/introduction}
+\subfile{subfiles/related_work}
+\subfile{subfiles/background}
+\subfile{subfiles/methodology}
+\subfile{subfiles/evaluation}
+\subfile{subfiles/conclusions}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\subfile{subfiles/acknowledgement}
+\subfile{subfiles/statement_of_originality}
+\subfile{subfiles/appendix}
+
+\end{document}

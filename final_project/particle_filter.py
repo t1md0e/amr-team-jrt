@@ -21,7 +21,7 @@ from tf_transformations import quaternion_from_euler
 import tf2_ros
 from tf2_ros import TransformBroadcaster
 
-NUM_PARTICLES = 500
+NUM_PARTICLES = 2000
 
 # Noise parameters of the odometry motion model
 ALPHA_1 = 0.1   # rotation noise caused by rotation
@@ -31,7 +31,7 @@ ALPHA_4 = 0.05  # translation noise caused by rotation
 
 # Measurement model
 NUM_BEAMS = 30    # number of laser beams used for weighting a particle
-SIGMA_HIT = 0.2   # standard deviation of a measured range around the expected range
+SIGMA_HIT = 0.4   # standard deviation of a measured range around the expected range
 Z_RANDOM = 0.05   # probability of a random measurement (e.g. dynamic obstacles)
 
 # Filter is only updated if the robot has moved far enough
@@ -131,6 +131,10 @@ class ParticleFilter(Node):
         self.weights = np.full(NUM_PARTICLES, 1.0 / NUM_PARTICLES)
         self.w_slow = 0.0
         self.w_fast = 0.0
+
+        # Use the given pose immediately, otherwise map -> odom is only corrected once the robot moves
+        if self.prev_odom_pose is not None:
+            self.update_estimate()
         self.get_logger().info(f'\nParticles reinitialised around '
                                f'({msg.pose.pose.position.x:.2f}, {msg.pose.pose.position.y:.2f}, {theta:.2f})')
 
@@ -320,11 +324,10 @@ class ParticleFilter(Node):
 
         odom_pose = self.odom_pose.copy()
         if self.prev_odom_pose is None:
-            # First iteration: only weight the initial particles
+            # First iteration: no resampling before the robot has moved, otherwise the particles converge
+            # to the best hypotheses of a single scan (which are often wrong in symmetric environments)
             self.prev_odom_pose = odom_pose
-            self.measurement_update()
             self.update_estimate()
-            self.resample()
         else:
             delta_trans = math.sqrt((odom_pose[0] - self.prev_odom_pose[0]) ** 2 +
                                     (odom_pose[1] - self.prev_odom_pose[1]) ** 2)

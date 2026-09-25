@@ -1,14 +1,18 @@
 import heapq
+import numpy as np
 from math import hypot
 
 
 class OccupancyGridAStar:
 
-    def __init__(self, map_msg, start, goal):
+    def __init__(self, map_msg, start, goal, inflation_cells=0):
         self.map_msg = map_msg
         self.width = map_msg.info.width
         self.height = map_msg.info.height
         self.grid = map_msg.data
+
+        # Occupied cells grown by the robot radius (configuration space), so that paths keep a distance to obstacles
+        self.inflated = self.get_inflated_grid(inflation_cells) if inflation_cells > 0 else None
 
         # Convert to integer cell indices
         self.sx, self.sy = int(round(start[0])), int(round(start[1]))
@@ -63,6 +67,20 @@ class OccupancyGridAStar:
         # No path found
         return []
 
+    def get_inflated_grid(self, radius):
+        occupied = np.array(self.grid, dtype=np.int16).reshape(self.height, self.width) >= 50
+        inflated = np.zeros_like(occupied)
+
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if dx ** 2 + dy ** 2 > radius ** 2:
+                    continue
+                # Shift occupied cells by (dx, dy)
+                inflated[max(0, dy):self.height + min(0, dy), max(0, dx):self.width + min(0, dx)] |= \
+                    occupied[max(0, -dy):self.height + min(0, -dy), max(0, -dx):self.width + min(0, -dx)]
+
+        return inflated
+
     def heuristic(self, x, y):
         return hypot(self.gx - x, self.gy - y)
 
@@ -70,6 +88,9 @@ class OccupancyGridAStar:
         return 0 <= x < self.width and 0 <= y < self.height
 
     def is_free(self, x, y):
+        if self.inflated is not None and self.inflated[y, x]:
+            # Too close to an obstacle for the robot
+            return False
         idx = y * self.width + x
         val = self.grid[idx]
         if val < 0:

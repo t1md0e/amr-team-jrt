@@ -1,0 +1,28 @@
+name: Build LaTeX document
+on:
+  push:
+    paths:
+      - "documentation/**"
+      - ".github/workflows/documentation.yml"
+  pull_request:
+    paths:
+      - "documentation/**"
+      - ".github/workflows/documentation.yml"
+jobs:
+  build_latex:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Git repository
+        uses: actions/checkout@v4
+      - name: Compile LaTeX document
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: "report.tex"
+          working_directory: documentation
+      - name: Upload PDF file
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF
+          path: documentation/report.pdf
+          retention-days: 10
+          if-no-files-found: error

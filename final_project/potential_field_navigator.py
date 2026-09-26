@@ -16,8 +16,8 @@ import tf2_ros
 from tf2_ros import TransformException
 
 ATTRACTION_C = 1.0
-REPULSION_C = 3.0
-RHO_0 = 1.5
+REPULSION_C = 0.5  # tuned for the repulsion of the closest obstacle: attraction and repulsion are equal at about 0.5 m
+RHO_0 = 0.8
 
 MAX_SPEED = 4
 MIN_SPEED = 0.5

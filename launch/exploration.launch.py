@@ -28,12 +28,18 @@ def generate_launch_description():
         DeclareLaunchArgument(name, default_value=default, description='Explorer parameter, see README')
         for name, default in zip(explorer_params, explorer_defaults)]
 
+    # Map is saved to this file (without extension) at the end of the exploration and every 30 s (empty = disabled)
+    declare_map_file_cmd = DeclareLaunchArgument(
+        'map_file',
+        default_value='',
+        description='File name (without extension) to save the map to, e.g. ~/lab_map')
+
     # Task 3: selects goals at the map fringe
     explorer_cmd = Node(
         package='final_project',
         executable='explorer',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time},
+        parameters=[{'use_sim_time': use_sim_time, 'map_file': LaunchConfiguration('map_file')},
                     {name: ParameterValue(LaunchConfiguration(name), value_type=float) for name in explorer_params}])
 
     # Task 1: path to the goal (A*) and motion between the waypoints (potential field)
@@ -43,14 +49,23 @@ def generate_launch_description():
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}])
 
+    # Speed limits of the navigator (m/s, rad/s), slow defaults for the real robot
+    navigator_params = ['max_linear_speed', 'min_linear_speed', 'max_angular_speed']
+    navigator_defaults = ['0.3', '0.1', '0.8']
+    declare_navigator_cmds = [
+        DeclareLaunchArgument(name, default_value=default, description='Navigator speed limit, see README')
+        for name, default in zip(navigator_params, navigator_defaults)]
+
     potential_field_navigator_cmd = Node(
         package='final_project',
         executable='potential_field_navigator',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}])
+        parameters=[{'use_sim_time': use_sim_time},
+                    {name: ParameterValue(LaunchConfiguration(name), value_type=float) for name in navigator_params}])
 
-    return LaunchDescription(declare_explorer_cmds + [
+    return LaunchDescription(declare_explorer_cmds + declare_navigator_cmds + [
         declare_use_sim_time_cmd,
+        declare_map_file_cmd,
         slam_gmapping_cmd,
         explorer_cmd,
         path_planner_cmd,

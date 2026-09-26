@@ -46,6 +46,9 @@ ALPHA_FAST = 0.2
 INITIAL_POS_STD = 0.3
 INITIAL_ROT_STD = 0.2
 
+# Rays are only cast up to this range (the real laser scanner has a range of 60 m, which would be far too slow)
+MAX_RAY_RANGE = 10.0
+
 FREE_THRESHOLD = 50
 ZERO_REPLACEMENT = 1e-6
 
@@ -183,18 +186,23 @@ class ParticleFilter(Node):
         beam_angles = scan.angle_min + beam_indices * scan.angle_increment
 
         # Measurements without a hit (inf) are treated as maximum range
+        range_max = min(scan.range_max, MAX_RAY_RANGE)
         measured = np.array(scan.ranges)[beam_indices]
-        measured = np.where(np.isfinite(measured), measured, scan.range_max)
-        measured = np.clip(measured, scan.range_min, scan.range_max)
+        valid = np.isfinite(measured) & (measured >= scan.range_min)
+        measured = np.where(np.isfinite(measured), measured, range_max)
+        measured = np.clip(measured, scan.range_min, range_max)
 
-        expected, informative = self.get_expected_ranges(beam_angles, scan.range_max)
+        expected, informative = self.get_expected_ranges(beam_angles, range_max)
+
+        # Invalid measurements (e.g. 0 on the real laser scanner) give no information
+        informative &= valid[None, :]
 
         # Gaussian around expected range mixed with a uniform random measurement
         p_hit = np.exp(-0.5 * ((measured - expected) / SIGMA_HIT) ** 2) / (SIGMA_HIT * math.sqrt(2 * math.pi))
-        p = (1.0 - Z_RANDOM) * p_hit + Z_RANDOM / scan.range_max
+        p = (1.0 - Z_RANDOM) * p_hit + Z_RANDOM / range_max
 
         # Beams ending in unknown cells give no information, so their likelihood is uniform over the range
-        p = np.where(informative, p, 1.0 / scan.range_max)
+        p = np.where(informative, p, 1.0 / range_max)
 
         # Sum log likelihoods of all beams to avoid numerical underflow
         log_likelihood = np.sum(np.log(p + ZERO_REPLACEMENT), axis=1)
@@ -320,11 +328,14 @@ class ParticleFilter(Node):
         self.tf_broadcaster.sendTransform(t)
 
     def control_loop(self):
+        if self.scan is None:
+            return
         try:
-            # Get transform of the laser scanner with respect to the base link
+            # Get transform of the laser scanner with respect to the base link (frame taken from the scan messages,
+            # base_laser_front_link in simulation, base_laser on the real robot)
             transform = self.tf_buffer.lookup_transform(
                 "base_link",
-                "base_laser_front_link",
+                self.scan.header.frame_id,
                 rclpy.time.Time()
             )
             quaternion = transform.transform.rotation

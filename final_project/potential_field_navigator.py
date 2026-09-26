@@ -19,8 +19,6 @@ ATTRACTION_C = 1.0
 REPULSION_C = 0.5  # tuned for the repulsion of the closest obstacle: attraction and repulsion are equal at about 0.5 m
 RHO_0 = 0.8
 
-MAX_SPEED = 4
-MIN_SPEED = 0.5
 THRESHOLD_ROTATION = 0.1
 THRESHOLD_POSE = 0.1
 
@@ -40,6 +38,15 @@ class PotentialFieldNavigator(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.laser_base_transform = None
+
+        # Frame of the laser scanner, taken from the scan messages
+        # (base_laser_front_link in simulation, base_laser on the real robot)
+        self.laser_frame = None
+
+        # Speed limits, slow defaults for the real robot (the simulation was tested with 0.8 / 0.5 / 1.5)
+        self.max_linear_speed = self.declare_parameter('max_linear_speed', 0.3).value
+        self.min_linear_speed = self.declare_parameter('min_linear_speed', 0.1).value
+        self.max_angular_speed = self.declare_parameter('max_angular_speed', 0.8).value
         self.odom_base_transform = None
         self.map_odom_transform = None
 
@@ -96,14 +103,16 @@ class PotentialFieldNavigator(Node):
 
     def update_obstacles(self, msg):
         """ Get obstacle distances from /scan topic and update repulsive velocity from obstacles """
+        self.laser_frame = msg.header.frame_id
         if not self.laser_base_transform:
             return
 
-        angles = msg.angle_min + np.arange(len(msg.ranges)) * msg.angle_increment
-        coords_polar = np.column_stack((msg.ranges, angles))
-        coords_cart = np_polar2cart(coords_polar)
-
-        coords_clean = coords_cart[np.isfinite(coords_cart).all(axis=1)]
+        # Invalid measurements (e.g. 0 on the real laser scanner) would create a huge repulsion
+        ranges = np.array(msg.ranges)
+        angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
+        valid = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
+        coords_polar = np.column_stack((ranges[valid], angles[valid]))
+        coords_clean = np_polar2cart(coords_polar)
         coords_transformed = apply_transform(coords_clean, self.laser_base_transform)
 
         if len(coords_transformed) == 0:
@@ -138,10 +147,13 @@ class PotentialFieldNavigator(Node):
         return 0.0, 0.0
 
     def control_loop(self):
+        if self.laser_frame is None:
+            # No scan received yet
+            return
         try:
             self.laser_base_transform = self.tf_buffer.lookup_transform(
                 "base_link",
-                "base_laser_front_link",
+                self.laser_frame,
                 rclpy.time.Time()
             )
             self.odom_base_transform = self.tf_buffer.lookup_transform(
@@ -186,12 +198,12 @@ class PotentialFieldNavigator(Node):
 
             # Angular control (unchanged idea)
             k_omega = 1.2
-            MAX_ANG_VEL = 1.5
+            MAX_ANG_VEL = self.max_angular_speed
             omega = max(-MAX_ANG_VEL, min(MAX_ANG_VEL, k_omega * desired_theta))
             msg.angular.z = omega
 
             # Near-constant forward speed with smooth slowdowns
-            V_REF = 0.8                 # nominal forward speed (tune)
+            V_REF = self.max_linear_speed  # nominal forward speed (parameter max_linear_speed)
             TURN_SLOWDOWN_K = 0.8       # how much to slow when turning (tune)
             OBS_SLOWDOWN_K = 2.0        # how much to slow when repulsion is strong (tune)
 
@@ -208,7 +220,7 @@ class PotentialFieldNavigator(Node):
 
             # Final forward speed
             v_cmd = V_REF * turn_slow * obs_slow
-            msg.linear.x = float(max(MIN_SPEED, min(MAX_SPEED, v_cmd)) * goal_slow)
+            msg.linear.x = float(max(self.min_linear_speed, min(self.max_linear_speed, v_cmd)) * goal_slow)
 
             # Rotate in place if the desired direction is to the side or behind, driving would lead to circles
             ROTATE_IN_PLACE_ANGLE = math.pi / 2
@@ -218,7 +230,7 @@ class PotentialFieldNavigator(Node):
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 
         elif abs(delta_theta) > THRESHOLD_ROTATION:
-            msg.angular.z = math.copysign(1.0, delta_theta)
+            msg.angular.z = math.copysign(min(1.0, self.max_angular_speed), delta_theta)
 
         else:
             msg.linear.x = 0.0

@@ -83,6 +83,8 @@ This node is responsible for navigating the robot towards a given waypoint while
 
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
 
+The speed limits can be set with the parameters `max_linear_speed` (default 0.3 m/s), `min_linear_speed` (default 0.1 m/s) and `max_angular_speed` (default 0.8 rad/s), e.g. `ros2 run final_project potential_field_navigator --ros-args -p max_linear_speed:=0.5` or as launch arguments of `exploration.launch.py`. Laser measurements outside of the range of the scanner (e.g. 0 on the real robot) are ignored, and the laser frame is taken from the scan messages (`base_laser_front_link` in simulation, `base_laser` on the real robot).
+
 The waypoint is given in map frame and transformed to the odom frame in every control step, so that the goal follows corrections of the localisation (`map` -> `odom`).
 
 If the waypoint is reached, the robot rotates to the desired position and stops.
@@ -106,6 +108,8 @@ The filter is only updated once the robot has moved or rotated far enough. Every
 - Motion update: Every particle is moved by sampling from the odometry motion model (initial rotation, translation, final rotation, each under the influence of Gaussian noise).
 - Measurement update: For a subset of the laser beams, the expected range is calculated for every particle by casting a ray through the occupancy grid. The particle weight is the likelihood of the measured ranges, modelled as a Gaussian around the expected range mixed with a small probability for random measurements. Beams whose ray ends in an unknown cell of the map give no information and get a uniform likelihood, so that the filter also works with partial maps.
 - Resampling: The particles are sampled with replacement proportional to their weights. To recover from localisation failures (kidnapped robot problem), random particles are added if the short term average of the measurement likelihood drops below the long term average.
+
+Rays are cast up to 10 m (the real laser scanner has a range of 60 m), and the laser frame is taken from the scan messages.
 
 The estimated pose is the weighted mean of the particles, its variance is published as covariance. The node also publishes the transform `map` -> `odom`, so that other nodes (e.g. `potential_field_navigator`) can transform between both frames.
 
@@ -139,6 +143,8 @@ This node is responsible for exploring the environment by selecting goals at the
 The goal is the closest reachable fringe cell that is at least 1 m away from the robot, which is found using the wavefront algorithm (breadth-first search over the free cells, starting at the robot position). Closer fringe cells are only used if there is no other, as there is always fringe right next to the robot (the laser scanner only looks to the front). For the same reason, the goal orientation points towards the unknown cells around the goal, so that the robot looks into the unexplored region once it has reached the goal. The goal is published to `/goal`, so that `path_planner` and `potential_field_navigator` move the robot there.
 
 A new goal is selected if the current goal is reached, if the region around the goal has already been explored while driving there, or if the robot makes no progress towards the goal. In the last case, the goal is added to a blacklist and is not selected again. Once no reachable fringe is left, the exploration is finished.
+
+If the parameter `map_file` is set (e.g. `ros2 launch final_project exploration.launch.py map_file:=~/lab_map`), the map is saved in the format of `map_server` (`.pgm` and `.yaml`) at the end of the exploration, every 30 s and when the node is stopped, so that it can be used for the localisation of task 2.
 
 As the laser scanner is mounted at the front of the robot, the robot's own cell is still unknown at the start, so that A* can not find a path. In this case, the node first moves the robot forward by publishing a waypoint directly to `potential_field_navigator`. This is only done at the start, until the robot's cell has been seen once.
 

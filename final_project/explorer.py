@@ -19,6 +19,7 @@ ROBOT_RADIUS = 0.4            # obstacles are grown by this radius (configuratio
 MIN_FRONTIER_SIZE = 15        # minimal number of connected fringe cells (about robot width) to be considered as a goal
 BLACKLIST_RADIUS = 0.5        # fringe cells around a failed goal are ignored
 THRESHOLD_GOAL = 0.3          # distance at which a goal counts as reached
+MIN_GOAL_DISTANCE = 1.0       # preferred minimal distance of a goal, closer fringe cells are only used if there are no others
 PROGRESS_DISTANCE = 0.2       # robot has to get this much closer to the goal ...
 PROGRESS_TIMEOUT = 30.0       # ... within this time (s), otherwise the goal is abandoned
 INITIAL_STEP = 0.6            # distance the robot moves forward if its own cell is still unknown
@@ -137,22 +138,29 @@ class Explorer(Node):
                     visited[y, x] = True
                     queue.append((x, y))
 
+        # Closest fringe cell that is not far enough away, only used if there is no other
+        # (the laser scanner only looks to the front, so there is always fringe right next to the robot)
+        close_goal = None
+
         # Wavefront expands over free cells
         while queue:
             x, y = queue.popleft()
             if candidates[y, x] and not self.is_blacklisted(x, y):
                 map_x, map_y = self.cell_to_map_coords(x, y)
-                # Goals closer than the goal threshold would immediately count as reached
-                if euclid_distance(self.x, self.y, map_x, map_y) >= THRESHOLD_GOAL:
+                distance = euclid_distance(self.x, self.y, map_x, map_y)
+                if distance >= MIN_GOAL_DISTANCE:
                     return map_x, map_y
+                # Goals closer than the goal threshold would immediately count as reached
+                if close_goal is None and distance >= THRESHOLD_GOAL:
+                    close_goal = map_x, map_y
             for dx, dy in NEIGHBORS:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < width and 0 <= ny < height and free[ny, nx] and not visited[ny, nx]:
                     visited[ny, nx] = True
                     queue.append((nx, ny))
 
-        # No reachable fringe left
-        return None
+        # No reachable fringe far enough away, use a close one (None if there is no reachable fringe at all)
+        return close_goal
 
     def is_blacklisted(self, cell_x, cell_y):
         map_x, map_y = self.cell_to_map_coords(cell_x, cell_y)
@@ -257,10 +265,16 @@ class Explorer(Node):
                 # Keep following the current goal
                 return
 
-        # The laser scanner is mounted at the front, so the robot's own cell is unknown at the start
         cell_x, cell_y = self.map_to_cell_coords(self.x, self.y)
         height, width = self.occupancy.shape
-        if 0 <= cell_x < width and 0 <= cell_y < height and self.occupancy[cell_y, cell_x] < 0:
+        if not (0 <= cell_x < width and 0 <= cell_y < height):
+            # Robot is outside of the map (e.g. before the map has been extended), this does not mean that
+            # the exploration is finished
+            self.get_logger().warning(f'\nRobot is outside of the map, waiting for the map to be extended')
+            return
+
+        # The laser scanner is mounted at the front, so the robot's own cell is unknown at the start
+        if self.occupancy[cell_y, cell_x] < 0:
             self.publish_initial_step()
             return
 

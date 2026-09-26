@@ -187,19 +187,25 @@ class ParticleFilter(Node):
         measured = np.where(np.isfinite(measured), measured, scan.range_max)
         measured = np.clip(measured, scan.range_min, scan.range_max)
 
-        expected = self.get_expected_ranges(beam_angles, scan.range_max)
+        expected, informative = self.get_expected_ranges(beam_angles, scan.range_max)
 
         # Gaussian around expected range mixed with a uniform random measurement
         p_hit = np.exp(-0.5 * ((measured - expected) / SIGMA_HIT) ** 2) / (SIGMA_HIT * math.sqrt(2 * math.pi))
         p = (1.0 - Z_RANDOM) * p_hit + Z_RANDOM / scan.range_max
+
+        # Beams ending in unknown cells give no information, so their likelihood is uniform over the range
+        p = np.where(informative, p, 1.0 / scan.range_max)
 
         # Sum log likelihoods of all beams to avoid numerical underflow
         log_likelihood = np.sum(np.log(p + ZERO_REPLACEMENT), axis=1)
         self.weights = np.exp(log_likelihood - np.max(log_likelihood))
         self.weights /= np.sum(self.weights)
 
-        # Average likelihood per beam, used to decide on adding random particles
-        w_avg = np.mean(np.exp(log_likelihood / NUM_BEAMS))
+        # Average likelihood per informative beam, used to decide on adding random particles
+        # (looking into unknown parts of the map must not look like a localisation failure)
+        log_likelihood_informative = np.sum(np.where(informative, np.log(p + ZERO_REPLACEMENT), 0.0), axis=1)
+        num_informative = np.maximum(np.sum(informative, axis=1), 1)
+        w_avg = np.mean(np.exp(log_likelihood_informative / num_informative))
         if self.w_slow == 0.0:
             self.w_slow = w_avg
             self.w_fast = w_avg
@@ -207,7 +213,8 @@ class ParticleFilter(Node):
         self.w_fast += ALPHA_FAST * (w_avg - self.w_fast)
 
     def get_expected_ranges(self, beam_angles, range_max):
-        """ Cast rays from the laser pose of every particle and return the distance to the first occupied cell """
+        """ Cast rays from the laser pose of every particle and return the distance to the first occupied cell,
+        together with whether the ray is informative (i.e. does not end in an unknown cell) """
         map_res = self.grid.info.resolution
         map_origin = self.grid.info.origin.position
         height, width = self.occupancy.shape
@@ -228,13 +235,22 @@ class ParticleFilter(Node):
         cells_y = np.floor((points_y - map_origin.y) / map_res).astype(int)
         inside = (cells_x >= 0) & (cells_x < width) & (cells_y >= 0) & (cells_y < height)
 
-        # Rays leaving the map are treated as hitting an obstacle
-        occupied = np.ones(cells_x.shape, dtype=bool)
-        occupied[inside] = self.occupancy[cells_y[inside], cells_x[inside]] >= FREE_THRESHOLD
+        # Cells outside of the map are unknown
+        occupancy = np.full(cells_x.shape, -1, dtype=np.int16)
+        occupancy[inside] = self.occupancy[cells_y[inside], cells_x[inside]]
+
+        # A ray stops at the first occupied or unknown cell
+        stopped = (occupancy >= FREE_THRESHOLD) | (occupancy < 0)
+        first_stop = np.argmax(stopped, axis=2)
+        stop_value = np.take_along_axis(occupancy, first_stop[:, :, None], axis=2)[:, :, 0]
 
         # Distance of the first occupied cell along each ray, maximum range if there is none
-        first_hit = np.argmax(occupied, axis=2)
-        return np.where(occupied.any(axis=2), steps[first_hit], range_max)
+        expected = np.where(stopped.any(axis=2), steps[first_stop], range_max)
+
+        # Rays ending in unknown cells do not tell what the laser should measure
+        informative = ~(stopped.any(axis=2) & (stop_value < 0))
+
+        return expected, informative
 
     def resample(self):
         """ Sample particles with replacement proportional to their weights and add random particles """

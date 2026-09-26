@@ -17,7 +17,8 @@ from tf_transformations import quaternion_from_euler
 import tf2_ros
 
 FREE_THRESHOLD = 50           # same as in a_star.py: cells with an occupancy below 50 are free
-ROBOT_RADIUS = 0.4            # obstacles are grown by this radius (configuration space)
+ROBOT_RADIUS = 0.5            # obstacles are grown by this radius (configuration space): the corners of the
+                              # 0.76 m x 0.47 m robot are about 0.45 m away from base_link, so it can rotate at the goal
 MIN_FRONTIER_SIZE = 15        # minimal number of connected fringe cells (about robot width) to be considered as a goal
 BLACKLIST_RADIUS = 0.5        # fringe cells around a failed goal are ignored
 THRESHOLD_GOAL = 0.3          # distance at which a goal counts as reached ...

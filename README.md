@@ -61,7 +61,7 @@ Subscribes to:
 Publishes:
 - `/waypoint` -> `geometry_msgs/PoseStamped` (position in map frame)
 
-This node is responsible for finding a path between the robot's current position and a given goal position. It uses A* search to find an optimal path between the robot position from `/odom` and the goal position from `/goal`. It can only find a path if it is also given an occupancy grid through `/map`.
+This node is responsible for finding a path between the robot's current position and a given goal position. It uses A* search to find an optimal path between the robot position from `/odom` and the goal position from `/goal`. It can only find a path if it is also given an occupancy grid through `/map`. Occupied cells are grown by 0.35 m (half of the robot width plus a margin, configuration space), so that the path keeps a distance to obstacles while the robot still fits lengthwise through doors.
 
 After a path has been calculated, it samples waypoints from the path and publishes them to `/waypoint`. Only ever one waypoint at a time is published: At first, this is simply the first waypoint in the path. The node keeps track of the robot's position and publishes the next waypoint in the path once the current waypoint has been reached. Once the final waypoint (i.e. the goal) has been reached, the path is discarded and no new waypoint is published.
 
@@ -84,6 +84,12 @@ This node is responsible for navigating the robot towards a given waypoint while
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
 
 The speed limits can be set with the parameters `max_linear_speed` (default 0.3 m/s), `min_linear_speed` (default 0.1 m/s) and `max_angular_speed` (default 0.8 rad/s), e.g. `ros2 run final_project potential_field_navigator --ros-args -p max_linear_speed:=0.5` or as launch arguments of `exploration.launch.py`. Laser measurements outside of the range of the scanner (e.g. 0 on the real robot) are ignored, and the laser frame is taken from the scan messages (`base_laser_front_link` in simulation, `base_laser` on the real robot).
+
+The repulsive force is calculated from the clearance between the rectangular robot footprint and the closest obstacle (configuration space), so that the corners of the robot also keep a distance to obstacles. The footprint is set with the parameters `robot_length` (default 0.76 m), `robot_width` (default 0.47 m) and `laser_to_front` (default 0.05 m, distance from the laser scanner to the front side, as the scanner is mounted in the middle of the front side); the position of the laser scanner in `base_link` is taken from the transforms. For safety:
+- if the clearance to an obstacle is below 0.1 m, the robot only moves away from it (sideways or backwards, the robot is omnidirectional),
+- the robot only rotates in place if no obstacle is inside the circle swept by its corners; otherwise it first moves away from the closest obstacle, or keeps its orientation at the final waypoint.
+
+Note that the laser scanner only sees obstacles in its field of view, obstacles behind the robot are not considered.
 
 The waypoint is given in map frame and transformed to the odom frame in every control step, so that the goal follows corrections of the localisation (`map` -> `odom`).
 
@@ -138,7 +144,7 @@ Publishes:
 - `/goal` -> `geometry_msgs/PoseStamped` (position in map frame, used by `path_planner`)
 - `/waypoint` -> `geometry_msgs/PoseStamped` (only for the initial step, see below)
 
-This node is responsible for exploring the environment by selecting goals at the map fringe, i.e. free cells that are next to unknown cells. Fringe cells are grouped into connected regions, and only regions with a minimum size are considered. To make sure that the robot fits there, occupied cells are grown by the robot radius (configuration space) and only fringe cells that are still free are used as goals.
+This node is responsible for exploring the environment by selecting goals at the map fringe, i.e. free cells that are next to unknown cells. Fringe cells are grouped into connected regions, and only regions with a minimum size are considered. To make sure that the robot fits there and can rotate, occupied cells are grown by 0.5 m (the corners of the robot are about 0.45 m away from its center, configuration space) and only fringe cells that are still free are used as goals.
 
 The goal is the closest reachable fringe cell that is at least 1 m away from the robot, which is found using the wavefront algorithm (breadth-first search over the free cells, starting at the robot position). Closer fringe cells are only used if there is no other, as there is always fringe right next to the robot (the laser scanner only looks to the front). For the same reason, the goal orientation points towards the unknown cells around the goal, so that the robot looks into the unexplored region once it has reached the goal. The goal is published to `/goal`, so that `path_planner` and `potential_field_navigator` move the robot there.
 

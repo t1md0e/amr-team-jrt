@@ -43,7 +43,11 @@ class PathPlanner(Node):
         self.latched_map_sub = self.create_subscription(OccupancyGrid, '/map', self.update_map, map_qos)
         self.goal_sub = self.create_subscription(PoseStamped, '/goal', self.update_goal, 10)
 
-        # Current pose (odom frame) to be updated
+        # Get listener for the robot pose in map frame (map -> base_link)
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # Current pose (map frame if map -> base_link is available, otherwise odom frame) to be updated
         self.x = 0.0
         self.y = 0.0
         self.theta = 0.0
@@ -69,6 +73,23 @@ class PathPlanner(Node):
         quaternion = msg.pose.pose.orientation
         self.theta = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
 
+    def update_pose_from_tf(self):
+        """ Get current position in map frame, as waypoints are given in map frame
+        (the odometry pose drifts away from the map pose, e.g. after localisation corrections) """
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "map",
+                "base_link",
+                rclpy.time.Time()
+            )
+        except tf2_ros.TransformException:
+            # Keep the pose from /odom
+            return
+        self.x = transform.transform.translation.x
+        self.y = transform.transform.translation.y
+        quaternion = transform.transform.rotation
+        self.theta = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
+
     def update_goal(self, msg):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
@@ -87,6 +108,7 @@ class PathPlanner(Node):
 
     def find_path(self):
         """ Find path to goal using A* algorithm """
+        self.update_pose_from_tf()
         start = self.get_free_start_cell(*self.map_to_cell_coords(self.x, self.y))
         goal = self.map_to_cell_coords(self.goal_x, self.goal_y)
         inflation_cells = int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution))
@@ -187,6 +209,8 @@ class PathPlanner(Node):
         self.get_logger().info(f'\nCurrent waypoint: {self.current_waypoint} ({self.path[self.current_waypoint]})')
 
     def control_loop(self):
+        self.update_pose_from_tf()
+
         if self.current_waypoint is not None:
             point_x, point_y = self.path[self.current_waypoint]
             delta_x = point_x - self.x

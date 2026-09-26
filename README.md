@@ -53,7 +53,8 @@ Both launch files accept `use_sim_time:=true` for running in simulation.
 ### Node: `path_planner`
 
 Subscribes to:
-- `/odom` -> `nav_msgs/Odometry`
+- `/odom` -> `nav_msgs/Odometry` (only used if the transform `map` -> `base_link` is not available)
+- `/tf` -> transform `map` -> `base_link` (robot position in map frame, e.g. from `particle_filter` or `slam_gmapping`)
 - `/map` -> `nav_msgs/OccupancyGrid`
 - `/goal` -> `geometry_msgs/PoseStamped` (expects position in map frame)
 
@@ -81,6 +82,8 @@ Publishes:
 This node is responsible for navigating the robot towards a given waypoint while avoiding obstacles. It uses potential-field based navigation move around obstacles detected by its Lidar sensor and toward a goal given by `/waypoint`.
 
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
+
+The waypoint is given in map frame and transformed to the odom frame in every control step, so that the goal follows corrections of the localisation (`map` -> `odom`).
 
 If the waypoint is reached, the robot rotates to the desired position and stops.
 

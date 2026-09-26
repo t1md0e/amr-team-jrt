@@ -56,6 +56,10 @@ class PotentialFieldNavigator(Node):
         # Robot does not move before the first waypoint has been received
         self.has_goal = False
 
+        # Last received waypoint (map frame), transformed to the odom frame in every control step, so that the
+        # goal follows corrections of the localisation (map -> odom)
+        self.waypoint = None
+
         # Current attractive and repulsive velocities (base link frame)
         self.attraction = 0.0, 0.0
         self.repulsion = 0.0, 0.0
@@ -74,19 +78,21 @@ class PotentialFieldNavigator(Node):
             self.attraction = tuple(apply_rotation(np.array([[vel_x, vel_y]]), self.odom_base_transform)[0])
 
     def update_goal(self, msg):
-        transform = self.map_odom_transform
-        if transform is None:
-            self.get_logger().warn('No map_odom transform available, cannot update goal')
-            return
-        transformed_coords = apply_transform(np.array([[msg.pose.position.x, msg.pose.position.y]]), transform)
-        self.goal_x = transformed_coords[0][0]
-        self.goal_y = transformed_coords[0][1]
         goal_quat = msg.pose.orientation
         goal_yaw = euler_from_quaternion([goal_quat.x, goal_quat.y, goal_quat.z, goal_quat.w])[2]
+        self.waypoint = (msg.pose.position.x, msg.pose.position.y, goal_yaw)
+        self.has_goal = True
+
+    def transform_waypoint(self):
+        """ Transform the waypoint from map frame to odom frame with the current map_odom transform """
+        transform = self.map_odom_transform
+        waypoint_x, waypoint_y, waypoint_yaw = self.waypoint
+        transformed_coords = apply_transform(np.array([[waypoint_x, waypoint_y]]), transform)
+        self.goal_x = transformed_coords[0][0]
+        self.goal_y = transformed_coords[0][1]
         transform_quat = transform.transform.rotation
         transform_yaw = euler_from_quaternion([transform_quat.x, transform_quat.y, transform_quat.z, transform_quat.w])[2]
-        self.goal_theta = math.atan2(math.sin(goal_yaw + transform_yaw), math.cos(goal_yaw + transform_yaw))
-        self.has_goal = True
+        self.goal_theta = math.atan2(math.sin(waypoint_yaw + transform_yaw), math.cos(waypoint_yaw + transform_yaw))
 
     def update_obstacles(self, msg):
         """ Get obstacle distances from /scan topic and update repulsive velocity from obstacles """
@@ -157,6 +163,8 @@ class PotentialFieldNavigator(Node):
             # Wait for the first waypoint
             self.vel_pub.publish(msg)
             return
+
+        self.transform_waypoint()
 
         delta_x = self.goal_x - self.x
         delta_y = self.goal_y - self.y

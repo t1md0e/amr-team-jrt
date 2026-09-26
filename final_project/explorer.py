@@ -18,11 +18,15 @@ FREE_THRESHOLD = 50           # same as in a_star.py: cells with an occupancy be
 ROBOT_RADIUS = 0.4            # obstacles are grown by this radius (configuration space)
 MIN_FRONTIER_SIZE = 15        # minimal number of connected fringe cells (about robot width) to be considered as a goal
 BLACKLIST_RADIUS = 0.5        # fringe cells around a failed goal are ignored
-THRESHOLD_GOAL = 0.3          # distance at which a goal counts as reached
+THRESHOLD_GOAL = 0.3          # distance at which a goal counts as reached ...
+THRESHOLD_GOAL_ROTATION = 0.3 # ... together with this orientation error (robot has to look into the unknown region)
 MIN_GOAL_DISTANCE = 1.0       # preferred minimal distance of a goal, closer fringe cells are only used if there are no others
 PROGRESS_DISTANCE = 0.2       # robot has to get this much closer to the goal ...
 PROGRESS_TIMEOUT = 30.0       # ... within this time (s), otherwise the goal is abandoned
+UNKNOWN_DIRECTION_RADIUS = 1.0  # unknown cells within this radius around a goal determine the goal orientation
+MIN_AREA_GAIN = 1.0           # explored area (m^2) that counts as progress for the stagnation criterion
 INITIAL_STEP = 0.6            # distance the robot moves forward if its own cell is still unknown
+MAX_INITIAL_STEPS = 5         # safety limit, e.g. if SLAM does not update the map
 
 # 8-connected neighbors
 NEIGHBORS = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
@@ -51,12 +55,32 @@ class Explorer(Node):
 
         # Currently explored goal (map frame) and progress towards it
         self.goal = None
+        self.goal_theta = None
         self.best_distance = None
         self.last_progress_time = None
 
         # Goals that could not be reached
         self.blacklist = []
         self.finished = False
+
+        # Optional exploration boundary (map frame), only fringe cells inside are used as goals,
+        # e.g. to keep the robot inside a building with an open door
+        self.boundary_x_min = self.declare_parameter('boundary_x_min', -math.inf).value
+        self.boundary_x_max = self.declare_parameter('boundary_x_max', math.inf).value
+        self.boundary_y_min = self.declare_parameter('boundary_y_min', -math.inf).value
+        self.boundary_y_max = self.declare_parameter('boundary_y_max', math.inf).value
+
+        # Optional stopping criteria in s (0 = disabled): total exploration time, and time without new explored area
+        self.max_duration = self.declare_parameter('max_duration', 0.0).value
+        self.stagnation_timeout = self.declare_parameter('stagnation_timeout', 0.0).value
+        self.start_time = None
+        self.known_area = 0.0
+        self.last_area_gain_time = None
+        self.stopped = False
+
+        # The initial step is only needed at the start, before the robot's own cell has been seen once
+        self.initial_step_done = False
+        self.initial_steps = 0
 
         self.timer = self.create_timer(1.0, self.control_loop)
 
@@ -117,12 +141,26 @@ class Explorer(Node):
 
         return sizes
 
+    def get_boundary_mask(self):
+        """ Get cells whose center is inside the exploration boundary """
+        map_origin = self.grid.info.origin.position
+        map_res = self.grid.info.resolution
+        height, width = self.occupancy.shape
+
+        map_x = (np.arange(width) + 0.5) * map_res + map_origin.x
+        map_y = (np.arange(height) + 0.5) * map_res + map_origin.y
+        inside_x = (map_x >= self.boundary_x_min) & (map_x <= self.boundary_x_max)
+        inside_y = (map_y >= self.boundary_y_min) & (map_y <= self.boundary_y_max)
+
+        return inside_y[:, None] & inside_x[None, :]
+
     def find_goal(self):
         """ Find the closest reachable fringe cell using the wavefront algorithm (breadth-first search) """
         free = (self.occupancy >= 0) & (self.occupancy < FREE_THRESHOLD)
         fringe = self.get_fringe(free)
         candidates = fringe & self.get_configuration_space(free)
         candidates &= self.get_fringe_sizes(fringe) >= MIN_FRONTIER_SIZE
+        candidates &= self.get_boundary_mask()
 
         height, width = self.occupancy.shape
         start_x, start_y = self.map_to_cell_coords(self.x, self.y)
@@ -189,15 +227,33 @@ class Explorer(Node):
         map_res = self.grid.info.resolution
         return int((map_x - map_origin.x) / map_res), int((map_y - map_origin.y) / map_res)
 
-    def publish_goal(self):
+    def get_unknown_direction(self, map_x, map_y):
+        """ Get the direction from a goal towards the unknown cells around it, so that the robot looks into the
+        unexplored region once it has reached the goal (the laser scanner only looks to the front) """
+        cell_x, cell_y = self.map_to_cell_coords(map_x, map_y)
+        radius = int(math.ceil(UNKNOWN_DIRECTION_RADIUS / self.grid.info.resolution))
+        height, width = self.occupancy.shape
+        y_min, y_max = max(0, cell_y - radius), min(height, cell_y + radius + 1)
+        x_min, x_max = max(0, cell_x - radius), min(width, cell_x + radius + 1)
+
+        unknown_y, unknown_x = np.nonzero(self.occupancy[y_min:y_max, x_min:x_max] < 0)
+        if len(unknown_x) == 0:
+            # Fall back to the driving direction
+            return math.atan2(map_y - self.y, map_x - self.x)
+
+        # Direction towards the center of the unknown cells
+        return math.atan2(np.mean(unknown_y) + y_min - cell_y, np.mean(unknown_x) + x_min - cell_x)
+
+    def publish_goal(self, goal_theta=None):
         goal_x, goal_y = self.goal
 
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "map"
 
-        # Face in driving direction, towards the unexplored region
-        goal_theta = math.atan2(goal_y - self.y, goal_x - self.x)
+        if goal_theta is None:
+            goal_theta = self.get_unknown_direction(goal_x, goal_y)
+        self.goal_theta = goal_theta
         q = quaternion_from_euler(0.0, 0.0, goal_theta)
         msg.pose.position = Point(x=goal_x, y=goal_y, z=0.0)
         msg.pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
@@ -223,6 +279,32 @@ class Explorer(Node):
 
         self.get_logger().info(f'\nRobot cell unknown, moving forward to ({step_x:.2f}, {step_y:.2f})')
 
+    def stop_exploration(self, reason):
+        """ Stop the exploration and let the robot stop at its current position """
+        self.get_logger().info(f'\n{reason}, exploration stopped')
+        self.stopped = True
+        self.goal = (self.x, self.y)
+        self.publish_goal(self.theta)
+
+    def check_stopping_criteria(self, now):
+        """ Check the optional stopping criteria, returns True if the exploration has to be stopped """
+        if self.start_time is None:
+            self.start_time = now
+            self.last_area_gain_time = now
+
+        known_area = np.sum(self.occupancy >= 0) * self.grid.info.resolution ** 2
+        if known_area > self.known_area + MIN_AREA_GAIN:
+            self.known_area = known_area
+            self.last_area_gain_time = now
+
+        if self.max_duration > 0 and now - self.start_time > self.max_duration:
+            self.stop_exploration(f'Maximum exploration time of {self.max_duration:.0f} s reached')
+            return True
+        if self.stagnation_timeout > 0 and now - self.last_area_gain_time > self.stagnation_timeout:
+            self.stop_exploration(f'No new area explored for {self.stagnation_timeout:.0f} s')
+            return True
+        return False
+
     def control_loop(self):
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -243,6 +325,9 @@ class Explorer(Node):
 
         now = self.get_clock().now().nanoseconds * 1e-9
 
+        if self.stopped or self.check_stopping_criteria(now):
+            return
+
         if self.goal is not None:
             distance = euclid_distance(self.x, self.y, self.goal[0], self.goal[1])
 
@@ -250,7 +335,8 @@ class Explorer(Node):
                 self.best_distance = distance
                 self.last_progress_time = now
 
-            if distance < THRESHOLD_GOAL:
+            delta_theta = math.atan2(math.sin(self.goal_theta - self.theta), math.cos(self.goal_theta - self.theta))
+            if distance < THRESHOLD_GOAL and abs(delta_theta) < THRESHOLD_GOAL_ROTATION:
                 self.get_logger().info(f'\nExploration goal reached')
                 self.goal = None
             elif not self.is_fringe(self.goal[0], self.goal[1]):
@@ -274,9 +360,17 @@ class Explorer(Node):
             return
 
         # The laser scanner is mounted at the front, so the robot's own cell is unknown at the start
-        if self.occupancy[cell_y, cell_x] < 0:
-            self.publish_initial_step()
+        # (later on, unknown cells below the robot are ignored, otherwise the robot would keep stepping
+        # forward whenever it drives over a region that the laser has not seen)
+        if self.occupancy[cell_y, cell_x] < 0 and not self.initial_step_done:
+            if self.initial_steps < MAX_INITIAL_STEPS:
+                self.initial_steps += 1
+                self.publish_initial_step()
+            else:
+                self.get_logger().warning(f'\nRobot cell is still unknown after {MAX_INITIAL_STEPS} steps, '
+                                          f'is the map being updated?')
             return
+        self.initial_step_done = True
 
         self.goal = self.find_goal()
         if self.goal is None:

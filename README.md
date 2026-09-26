@@ -53,7 +53,8 @@ Both launch files accept `use_sim_time:=true` for running in simulation.
 ### Node: `path_planner`
 
 Subscribes to:
-- `/odom` -> `nav_msgs/Odometry`
+- `/odom` -> `nav_msgs/Odometry` (only used if the transform `map` -> `base_link` is not available)
+- `/tf` -> transform `map` -> `base_link` (robot position in map frame, e.g. from `particle_filter` or `slam_gmapping`)
 - `/map` -> `nav_msgs/OccupancyGrid`
 - `/goal` -> `geometry_msgs/PoseStamped` (expects position in map frame)
 
@@ -82,6 +83,8 @@ This node is responsible for navigating the robot towards a given waypoint while
 
 From the data of the Lidar sensor, the distances to obstacles are calculated and used to determine their repulsive forces. These forces are combined with the attractive forces calculated from the given goal position. The node then uses this data to calculate linear and angular velocities that are published to `/cmd_vel`.
 
+The waypoint is given in map frame and transformed to the odom frame in every control step, so that the goal follows corrections of the localisation (`map` -> `odom`).
+
 If the waypoint is reached, the robot rotates to the desired position and stops.
 
 ### Node: `particle_filter`
@@ -101,7 +104,7 @@ This node is responsible for localising the robot in a given map using Monte Car
 
 The filter is only updated once the robot has moved or rotated far enough. Every update consists of three steps:
 - Motion update: Every particle is moved by sampling from the odometry motion model (initial rotation, translation, final rotation, each under the influence of Gaussian noise).
-- Measurement update: For a subset of the laser beams, the expected range is calculated for every particle by casting a ray through the occupancy grid. The particle weight is the likelihood of the measured ranges, modelled as a Gaussian around the expected range mixed with a small probability for random measurements.
+- Measurement update: For a subset of the laser beams, the expected range is calculated for every particle by casting a ray through the occupancy grid. The particle weight is the likelihood of the measured ranges, modelled as a Gaussian around the expected range mixed with a small probability for random measurements. Beams whose ray ends in an unknown cell of the map give no information and get a uniform likelihood, so that the filter also works with partial maps.
 - Resampling: The particles are sampled with replacement proportional to their weights. To recover from localisation failures (kidnapped robot problem), random particles are added if the short term average of the measurement likelihood drops below the long term average.
 
 The estimated pose is the weighted mean of the particles, its variance is published as covariance. The node also publishes the transform `map` -> `odom`, so that other nodes (e.g. `potential_field_navigator`) can transform between both frames.
@@ -133,11 +136,11 @@ Publishes:
 
 This node is responsible for exploring the environment by selecting goals at the map fringe, i.e. free cells that are next to unknown cells. Fringe cells are grouped into connected regions, and only regions with a minimum size are considered. To make sure that the robot fits there, occupied cells are grown by the robot radius (configuration space) and only fringe cells that are still free are used as goals.
 
-The goal is the closest reachable fringe cell, which is found using the wavefront algorithm (breadth-first search over the free cells, starting at the robot position). The goal is published to `/goal`, so that `path_planner` and `potential_field_navigator` move the robot there.
+The goal is the closest reachable fringe cell that is at least 1 m away from the robot, which is found using the wavefront algorithm (breadth-first search over the free cells, starting at the robot position). Closer fringe cells are only used if there is no other, as there is always fringe right next to the robot (the laser scanner only looks to the front). For the same reason, the goal orientation points towards the unknown cells around the goal, so that the robot looks into the unexplored region once it has reached the goal. The goal is published to `/goal`, so that `path_planner` and `potential_field_navigator` move the robot there.
 
 A new goal is selected if the current goal is reached, if the region around the goal has already been explored while driving there, or if the robot makes no progress towards the goal. In the last case, the goal is added to a blacklist and is not selected again. Once no reachable fringe is left, the exploration is finished.
 
-As the laser scanner is mounted at the front of the robot, the robot's own cell is still unknown at the start, so that A* can not find a path. In this case, the node first moves the robot forward by publishing a waypoint directly to `potential_field_navigator`.
+As the laser scanner is mounted at the front of the robot, the robot's own cell is still unknown at the start, so that A* can not find a path. In this case, the node first moves the robot forward by publishing a waypoint directly to `potential_field_navigator`. This is only done at the start, until the robot's cell has been seen once.
 
 
 ### Script: `a_star.py`

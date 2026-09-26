@@ -25,7 +25,8 @@ from final_project.a_star import OccupancyGridAStar
 
 THRESHOLD_WAYPOINT = 0.1               # final waypoint (goal) needs to be reached exactly
 THRESHOLD_INTERMEDIATE_WAYPOINT = 0.3  # intermediate waypoints only need to be passed
-ROBOT_RADIUS = 0.4                     # obstacles are grown by this radius for path finding (configuration space)
+ROBOT_RADIUS = 0.35                    # obstacles are grown by this radius for path finding (configuration space):
+                                       # half robot width (0.235 m) + margin, the robot drives lengthwise through doors
 START_SEARCH_RADIUS = 0.5              # if the robot's cell is not free, A* starts at a free cell within this radius
 ZERO_REPLACEMENT = 1e-6
 

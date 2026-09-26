@@ -16,8 +16,12 @@ import tf2_ros
 from tf2_ros import TransformException
 
 ATTRACTION_C = 1.0
-REPULSION_C = 0.5  # tuned for the repulsion of the closest obstacle: attraction and repulsion are equal at about 0.5 m
-RHO_0 = 0.8
+REPULSION_C = 0.1   # attraction and repulsion are equal at a clearance of about 0.35 m
+RHO_0 = 0.6         # repulsion is active below this clearance between robot footprint and obstacle
+
+SAFETY_CLEARANCE = 0.1   # below this clearance, the robot only moves away from the obstacle
+ROTATION_MARGIN = 0.05   # additional clearance needed to rotate in place
+ESCAPE_SPEED = 0.1       # speed for moving away from an obstacle
 
 THRESHOLD_ROTATION = 0.1
 THRESHOLD_POSE = 0.1
@@ -47,6 +51,19 @@ class PotentialFieldNavigator(Node):
         self.max_linear_speed = self.declare_parameter('max_linear_speed', 0.3).value
         self.min_linear_speed = self.declare_parameter('min_linear_speed', 0.1).value
         self.max_angular_speed = self.declare_parameter('max_angular_speed', 0.8).value
+
+        # Rectangular robot footprint, the laser scanner is mounted in the middle of the front side
+        self.robot_length = self.declare_parameter('robot_length', 0.76).value
+        self.robot_width = self.declare_parameter('robot_width', 0.47).value
+        self.laser_to_front = self.declare_parameter('laser_to_front', 0.05).value
+        # Footprint in base_link frame (front, rear, half width), set once the laser position is known
+        self.footprint = None
+
+        # Clearance to the closest obstacle and unit vector from the footprint towards it (base_link frame),
+        # and whether an obstacle is inside the circle swept by the corners when rotating in place
+        self.min_clearance = math.inf
+        self.obstacle_direction = 0.0, 0.0
+        self.rotation_blocked = False
         self.odom_base_transform = None
         self.map_odom_transform = None
 
@@ -104,7 +121,7 @@ class PotentialFieldNavigator(Node):
     def update_obstacles(self, msg):
         """ Get obstacle distances from /scan topic and update repulsive velocity from obstacles """
         self.laser_frame = msg.header.frame_id
-        if not self.laser_base_transform:
+        if not self.laser_base_transform or self.footprint is None:
             return
 
         # Invalid measurements (e.g. 0 on the real laser scanner) would create a huge repulsion
@@ -115,15 +132,39 @@ class PotentialFieldNavigator(Node):
         coords_clean = np_polar2cart(coords_polar)
         coords_transformed = apply_transform(coords_clean, self.laser_base_transform)
 
+        # Points inside the footprint are reflections from the robot itself
+        clearances, closest_points = self.get_footprint_clearance(coords_transformed)
+        outside = clearances > 0.01
+        coords_transformed, clearances, closest_points = \
+            coords_transformed[outside], clearances[outside], closest_points[outside]
+
         if len(coords_transformed) == 0:
             self.repulsion = 0.0, 0.0
+            self.min_clearance = math.inf
+            self.rotation_blocked = False
             return
 
-        # Repulsive field depends on the minimum distance to an obstacle (closest scan point), summing over
-        # all scan points would count a wall many times and create local minima in front of every wall
-        distances = np.hypot(coords_transformed[:, 0], coords_transformed[:, 1])
-        closest = coords_transformed[np.argmin(distances)]
-        self.repulsion = self.get_repulsion(0.0, 0.0, closest[0], closest[1])
+        # Repulsive field depends on the minimum distance between the robot footprint and an obstacle
+        # (configuration space), summing over all scan points would count a wall many times
+        closest = np.argmin(clearances)
+        self.min_clearance = clearances[closest]
+        delta = coords_transformed[closest] - closest_points[closest]
+        self.obstacle_direction = tuple(delta / max(np.hypot(delta[0], delta[1]), ZERO_REPLACEMENT))
+        self.repulsion = self.get_repulsion(self.min_clearance, *self.obstacle_direction)
+
+        # When rotating in place, the corners sweep a circle around base_link
+        front, rear, half_width = self.footprint
+        rotation_radius = math.hypot(max(front, rear), half_width) + ROTATION_MARGIN
+        self.rotation_blocked = bool(np.any(np.hypot(coords_transformed[:, 0], coords_transformed[:, 1]) < rotation_radius))
+
+    def get_footprint_clearance(self, points):
+        """ Get the distance of every point (base_link frame) to the rectangular footprint and the closest
+        point of the footprint (distance 0 for points inside the footprint) """
+        front, rear, half_width = self.footprint
+        closest_points = np.column_stack((np.clip(points[:, 0], -rear, front),
+                                          np.clip(points[:, 1], -half_width, half_width)))
+        clearances = np.hypot(points[:, 0] - closest_points[:, 0], points[:, 1] - closest_points[:, 1])
+        return clearances, closest_points
 
     def get_attraction(self, x, y):
         """ Calculate attractive velocity for a given point in world frame with respect to the goal position """
@@ -132,19 +173,22 @@ class PotentialFieldNavigator(Node):
         distance = max(math.sqrt(delta_x ** 2 + delta_y ** 2), ZERO_REPLACEMENT)
         return (- ATTRACTION_C * delta_x / distance), (- ATTRACTION_C * delta_y / distance)
 
-    def get_repulsion(self, x, y, obstacle_x, obstacle_y):
-        """ Calculate repulsive velocity for a given point in world frame with respect to an obstacle position """
-        delta_x = x - obstacle_x
-        delta_y = y - obstacle_y
-        distance = max(math.sqrt(delta_x ** 2 + delta_y ** 2), ZERO_REPLACEMENT)
+    def get_repulsion(self, clearance, obstacle_direction_x, obstacle_direction_y):
+        """ Calculate repulsive velocity (base_link frame) from the clearance to an obstacle and the direction
+        towards it, i.e. the distance to the obstacle in the configuration space """
+        distance = max(clearance, ZERO_REPLACEMENT)
 
         if distance < RHO_0:
-            direction_x = delta_x / distance
-            direction_y = delta_y / distance
             force_factor = REPULSION_C * (1.0 / distance - 1.0 / RHO_0) * (1 / distance ** 2)
-            return force_factor * direction_x, force_factor * direction_y
+            return -force_factor * obstacle_direction_x, -force_factor * obstacle_direction_y
 
         return 0.0, 0.0
+
+    def escape(self, msg):
+        """ Move away from the closest obstacle without rotating (the robot is omnidirectional) """
+        msg.linear.x = -ESCAPE_SPEED * self.obstacle_direction[0]
+        msg.linear.y = -ESCAPE_SPEED * self.obstacle_direction[1]
+        msg.angular.z = 0.0
 
     def control_loop(self):
         if self.laser_frame is None:
@@ -156,6 +200,12 @@ class PotentialFieldNavigator(Node):
                 self.laser_frame,
                 rclpy.time.Time()
             )
+            if self.footprint is None:
+                # Front side is just in front of the laser scanner, the rear side follows from the robot length
+                front = self.laser_base_transform.transform.translation.x + self.laser_to_front
+                self.footprint = front, self.robot_length - front, self.robot_width / 2
+                self.get_logger().info(f'\nFootprint (base_link frame): front {front:.2f} m, '
+                                       f'rear {self.robot_length - front:.2f} m, half width {self.robot_width / 2:.2f} m')
             self.odom_base_transform = self.tf_buffer.lookup_transform(
                 "base_link",
                 "odom",
@@ -226,11 +276,23 @@ class PotentialFieldNavigator(Node):
             ROTATE_IN_PLACE_ANGLE = math.pi / 2
             if abs(desired_theta) > ROTATE_IN_PLACE_ANGLE:
                 msg.linear.x = 0.0
+                if self.rotation_blocked:
+                    # A corner would hit the obstacle, first move away from it
+                    self.escape(msg)
+
+            # Too close to an obstacle: only move away from it
+            if self.min_clearance < SAFETY_CLEARANCE:
+                self.escape(msg)
+                self.get_logger().warning(f'\nObstacle {self.min_clearance:.2f} m from the robot, moving away')
 
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 
         elif abs(delta_theta) > THRESHOLD_ROTATION:
-            msg.angular.z = math.copysign(min(1.0, self.max_angular_speed), delta_theta)
+            if self.rotation_blocked:
+                # Waypoint is too close to an obstacle to rotate to the desired orientation, stay
+                self.get_logger().warning(f'\nNot enough space to rotate at the waypoint, keeping the orientation')
+            else:
+                msg.angular.z = math.copysign(min(1.0, self.max_angular_speed), delta_theta)
 
         else:
             msg.linear.x = 0.0

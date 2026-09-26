@@ -26,6 +26,7 @@ from final_project.a_star import OccupancyGridAStar
 THRESHOLD_WAYPOINT = 0.1               # final waypoint (goal) needs to be reached exactly
 THRESHOLD_INTERMEDIATE_WAYPOINT = 0.3  # intermediate waypoints only need to be passed
 ROBOT_RADIUS = 0.4                     # obstacles are grown by this radius for path finding (configuration space)
+START_SEARCH_RADIUS = 0.5              # if the robot's cell is not free, A* starts at a free cell within this radius
 ZERO_REPLACEMENT = 1e-6
 
 class PathPlanner(Node):
@@ -86,7 +87,7 @@ class PathPlanner(Node):
 
     def find_path(self):
         """ Find path to goal using A* algorithm """
-        start = self.map_to_cell_coords(self.x, self.y)
+        start = self.get_free_start_cell(*self.map_to_cell_coords(self.x, self.y))
         goal = self.map_to_cell_coords(self.goal_x, self.goal_y)
         inflation_cells = int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution))
         astar = OccupancyGridAStar(self.grid, start, goal, inflation_cells)
@@ -100,6 +101,25 @@ class PathPlanner(Node):
             self.get_logger().info(f"Path found with {len(self.path)} waypoints")
         else:
             self.get_logger().warning(f'No path found to goal')
+
+    def get_free_start_cell(self, cell_x, cell_y):
+        """ Get the closest free cell to the robot's cell, as the robot's own cell can be unknown
+        (e.g. the laser scanner only looks to the front) or be marked as occupied due to noise """
+        radius = int(math.ceil(START_SEARCH_RADIUS / self.grid.info.resolution))
+        width, height = self.grid.info.width, self.grid.info.height
+        best_cell, best_dist = (cell_x, cell_y), float('inf')
+
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                x, y = cell_x + dx, cell_y + dy
+                if not (0 <= x < width and 0 <= y < height):
+                    continue
+                val = self.grid.data[y * width + x]
+                dist = dx ** 2 + dy ** 2
+                if 0 <= val < 50 and dist < best_dist:
+                    best_cell, best_dist = (x, y), dist
+
+        return best_cell
 
     def get_sampled_path_in_map_coords(self, path, waypoint_spacing=0.3):
         """ Sample A* cell path into map-frame waypoints """

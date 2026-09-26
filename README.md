@@ -144,6 +144,8 @@ The goal is the closest reachable fringe cell that is at least 1 m away from the
 
 A new goal is selected if the current goal is reached, if the region around the goal has already been explored while driving there, or if the robot makes no progress towards the goal. In the last case, the goal is added to a blacklist and is not selected again. Once no reachable fringe is left, the exploration is finished.
 
+If the parameter `map_file` is set (e.g. `ros2 launch final_project exploration.launch.py map_file:=~/lab_map`), the map is saved in the format of `map_server` (`.pgm` and `.yaml`) at the end of the exploration, every 30 s and when the node is stopped, so that it can be used for the localisation of task 2.
+
 As the laser scanner is mounted at the front of the robot, the robot's own cell is still unknown at the start, so that A* can not find a path. In this case, the node first moves the robot forward by publishing a waypoint directly to `potential_field_navigator`. This is only done at the start, until the robot's cell has been seen once.
 
 

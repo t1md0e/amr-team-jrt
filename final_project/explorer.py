@@ -1,9 +1,11 @@
 import math
+import os
 import numpy as np
 from collections import deque
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseStamped
@@ -24,6 +26,7 @@ MIN_GOAL_DISTANCE = 1.0       # preferred minimal distance of a goal, closer fri
 PROGRESS_DISTANCE = 0.2       # robot has to get this much closer to the goal ...
 PROGRESS_TIMEOUT = 30.0       # ... within this time (s), otherwise the goal is abandoned
 UNKNOWN_DIRECTION_RADIUS = 1.0  # unknown cells within this radius around a goal determine the goal orientation
+MAP_SAVE_INTERVAL = 30.0      # s, the map is also saved periodically, so that it is not lost if the node is stopped
 MIN_AREA_GAIN = 1.0           # explored area (m^2) that counts as progress for the stagnation criterion
 INITIAL_STEP = 0.6            # distance the robot moves forward if its own cell is still unknown
 MAX_INITIAL_STEPS = 5         # safety limit, e.g. if SLAM does not update the map
@@ -81,6 +84,12 @@ class Explorer(Node):
         # The initial step is only needed at the start, before the robot's own cell has been seen once
         self.initial_step_done = False
         self.initial_steps = 0
+
+        # Optional file name (without extension) to save the map to, in the format of map_server (.pgm and .yaml),
+        # e.g. for the localisation of task 2 (empty = disabled)
+        self.map_file = os.path.expanduser(self.declare_parameter('map_file', '').value)
+        if self.map_file:
+            self.map_save_timer = self.create_timer(MAP_SAVE_INTERVAL, self.save_map)
 
         self.timer = self.create_timer(1.0, self.control_loop)
 
@@ -279,12 +288,39 @@ class Explorer(Node):
 
         self.get_logger().info(f'\nRobot cell unknown, moving forward to ({step_x:.2f}, {step_y:.2f})')
 
+    def save_map(self):
+        """ Save the last received map in the format of map_server (trinary .pgm image and .yaml metadata) """
+        if not self.map_file or self.grid is None:
+            return
+
+        # Free cells are white, occupied cells are black and unknown cells are grey (as written by map_saver);
+        # the image starts with the top row, the occupancy grid with the bottom row
+        image = np.where(self.occupancy < 0, 205, np.where(self.occupancy >= FREE_THRESHOLD, 0, 254))
+        image = image.astype(np.uint8)[::-1]
+        height, width = image.shape
+        with open(self.map_file + '.pgm', 'wb') as f:
+            f.write(b'P5\n%d %d\n255\n' % (width, height))
+            f.write(image.tobytes())
+
+        map_origin = self.grid.info.origin.position
+        with open(self.map_file + '.yaml', 'w') as f:
+            f.write(f'image: {os.path.basename(self.map_file)}.pgm\n'
+                    f'mode: trinary\n'
+                    f'resolution: {self.grid.info.resolution}\n'
+                    f'origin: [{map_origin.x}, {map_origin.y}, 0]\n'
+                    f'negate: 0\n'
+                    f'occupied_thresh: 0.65\n'
+                    f'free_thresh: 0.25\n')
+
+        self.get_logger().info(f'\nMap saved to {self.map_file}.pgm/.yaml')
+
     def stop_exploration(self, reason):
         """ Stop the exploration and let the robot stop at its current position """
         self.get_logger().info(f'\n{reason}, exploration stopped')
         self.stopped = True
         self.goal = (self.x, self.y)
         self.publish_goal(self.theta)
+        self.save_map()
 
     def check_stopping_criteria(self, now):
         """ Check the optional stopping criteria, returns True if the exploration has to be stopped """
@@ -378,6 +414,7 @@ class Explorer(Node):
             if not self.finished:
                 self.get_logger().info(f'\nNo reachable fringe left, exploration finished')
                 self.finished = True
+                self.save_map()
             return
         self.finished = False
 
@@ -394,10 +431,17 @@ def main(args=None):
 
     explorer = Explorer()
 
-    rclpy.spin(explorer)
+    try:
+        rclpy.spin(explorer)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        # Save the final map also if the node is stopped (e.g. with Ctrl+C)
+        explorer.save_map()
 
     explorer.destroy_node()
-    rclpy.shutdown()
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

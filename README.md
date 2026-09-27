@@ -161,4 +161,5 @@ This script contains the class `OccupancyGridAStar`, which carries out A* search
 
 
 
-Disclaimer: Some code was written with the help of AI.
+##Disclaimer: 
+Some code was written with the help of AI.

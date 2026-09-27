@@ -158,3 +158,7 @@ As the laser scanner is mounted at the front of the robot, the robot's own cell 
 ### Script: `a_star.py`
 
 This script contains the class `OccupancyGridAStar`, which carries out A* search on an occupancy grid. It considers cells with an occupancy below 50 as free and considers both direct and diagonal neighbors of cells as successors. The used heuristic is Euclidean distance.
+
+
+
+Disclaimer: Some code was written with the help of AI.

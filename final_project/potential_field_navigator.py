@@ -98,6 +98,10 @@ class PotentialFieldNavigator(Node):
         # view): start time and orientation of the current rotation in place
         self.rotation_start = None
         self.stalled_until = {1.0: 0.0, -1.0: 0.0}   # per rotation direction
+
+        # Direction of the ongoing rotation in place, kept until the rotation is finished; otherwise the direction
+        # flips between +180 and -180 degrees if the desired direction is right behind the robot
+        self.rotation_direction = None
         self.odom_base_transform = None
         self.map_odom_transform = None
 
@@ -148,6 +152,7 @@ class PotentialFieldNavigator(Node):
         self.waypoint = (msg.pose.position.x, msg.pose.position.y, goal_yaw)
         self.has_goal = True
         self.escape_start = None
+        self.rotation_direction = None
         self.backup_target = None
         self.backed_up = 0.0
 
@@ -353,6 +358,19 @@ class PotentialFieldNavigator(Node):
         msg.linear.y = speed * (-sin * delta_x + cos * delta_y) / distance
         msg.angular.z = 0.0
 
+    def get_committed_direction(self, angle):
+        """ Direction of a rotation in place by the given angle: the direction of the ongoing rotation as long as it is
+        possible, otherwise a new one (see get_rotation_direction) """
+        now = self.get_clock().now().nanoseconds * 1e-9
+        direction = self.rotation_direction
+        if direction is not None:
+            way = angle if math.copysign(1.0, angle) == direction else angle - math.copysign(2 * math.pi, angle)
+            if now >= self.stalled_until[direction] and self.rotation_free(way):
+                return direction
+        direction = self.get_rotation_direction(angle)
+        self.rotation_direction = direction if direction != 0.0 else None
+        return direction
+
     def escape_or_wait(self, msg):
         """ Rotating in place is not possible: move away from the closest obstacle for a limited time, then wait
         (e.g. until the explorer selects another goal), instead of alternating between rotating and moving away """
@@ -453,7 +471,7 @@ class PotentialFieldNavigator(Node):
             ROTATE_IN_PLACE_ANGLE = math.pi / 2
             if abs(desired_theta) > ROTATE_IN_PLACE_ANGLE:
                 msg.linear.x = 0.0
-                direction = self.get_rotation_direction(desired_theta)
+                direction = self.get_committed_direction(desired_theta)
                 if direction != 0.0 and not self.rotation_stalled(direction, omega):
                     msg.angular.z = direction * abs(omega)
                     self.escape_start = None
@@ -471,7 +489,7 @@ class PotentialFieldNavigator(Node):
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 
         elif abs(delta_theta) > THRESHOLD_ROTATION:
-            direction = self.get_rotation_direction(delta_theta)
+            direction = self.get_committed_direction(delta_theta)
             if direction == 0.0 or self.rotation_stalled(direction, min(1.0, self.max_angular_speed)):
                 # Waypoint is too close to an obstacle to rotate to the desired orientation, stay
                 self.get_logger().warning(f'\nNot enough space to rotate at the waypoint, keeping the orientation',
@@ -483,9 +501,10 @@ class PotentialFieldNavigator(Node):
             msg.linear.x = 0.0
             msg.angular.z = 0.0
 
-        # Stall detection only measures consecutive rotations in place
+        # Stall detection and the kept rotation direction only apply to consecutive rotations in place
         if msg.angular.z == 0.0 or msg.linear.x != 0.0 or msg.linear.y != 0.0:
             self.rotation_start = None
+            self.rotation_direction = None
 
         self.vel_pub.publish(msg)
         self.get_logger().info(f'\nCurrent pose: ({self.x:.2f}, {self.y:.2f}, {self.theta:.2f}), '

@@ -189,7 +189,9 @@ class PathPlanner(Node):
         """ Convert map coordinates to occupancy grid cell coordinates """
         map_origin = self.grid.info.origin.position
         map_res = self.grid.info.resolution
-        return int(round((map_x - map_origin.x) / map_res)), int(round((map_y - map_origin.y) / map_res))
+        # Cell that contains the point (same as in explorer.py); rounding gave the neighbouring cell for cell centers,
+        # e.g. an unknown cell next to a fringe goal, so that no path was found
+        return int(math.floor((map_x - map_origin.x) / map_res)), int(math.floor((map_y - map_origin.y) / map_res))
 
     def publish_current_waypoint(self):
         point_x, point_y = self.path[self.current_waypoint]

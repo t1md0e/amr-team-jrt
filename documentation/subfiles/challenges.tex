@@ -87,7 +87,7 @@
     The only goal it selected was an unknown spot at the start position: the floor below the robot, which the laser scanner at the front never sees. The robot drove around it again and again.
     The fringe in and behind the passage was never selected, because it was closer than \SI{0.5}{m} to obstacles or too small.
     We changed the explorer: such fringe cells are now explored from a view pose nearby, small regions from 4 cells on are used, and the unknown floor at the start position is ignored.
-    In the simulation, the robot then drove through the passage and explored the whole arena in about \SI{60}{s}. On the real robot, these changes have not been tested yet.
+    In the simulation, the robot then drove through the passage and explored the whole arena in about \SI{60}{s}, and on the real robot, it passed the narrow passage and mapped the whole arena as well.
 
     \subsection{Time Management}
     \label{sec:challenges:time_management}

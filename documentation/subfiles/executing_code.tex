@@ -8,7 +8,7 @@
     % Start with describing the environment and then describe how you executed the code in the simulation and on the real robot.
     % this section is to show the results of the executed code.
 
-    We first tested all tasks in the simulation and then on the real robot.
+    We first tested all tasks in the simulation. On the real robot, we tested the exploration (task 3).
     This section describes both environments and shows the results.
 
     \subsection{The Simulation}
@@ -26,6 +26,7 @@
     For this task, the robot was localised with our particle filter in a map created before.
     We sent three goals one after the other (Fig.~\ref{fig:sim_task1}).
     The robot reached all goals without collisions in about \SIrange{30}{50}{s} each, with a final position error of about \SIrange{0.02}{0.16}{m}.
+    With the new potential field in the configuration space (Sec.~\ref{sec:challenges:real_robot}), the robot also reached all three goals, with an error of about \SIrange{0.03}{0.14}{m}.
     Video: \href{https://youtu.be/eph5LCBV-MY}{aufgabe1 navigation}
 
     \begin{figure*}[t]
@@ -103,49 +104,29 @@
     \subsection{The Real Robot}
     \label{sec:executing_code:real_robot}
 
-    % dont forget to add pictures and videos of the real robot
-
     \textbf{Environment.}
     In the lab, we used a Robile with four wheels and a laser scanner at its front.
     The ROS~2 nodes ran in a Docker container with Ubuntu on a laptop with Ubuntu, which was connected to the robot via WLAN.
-    We tested in the corridor of the university with boxes as obstacles and in an arena that we built ourselves in the lab: two rectangular areas connected by a narrow passage (Fig.~\ref{fig:real_arena}).
+    We built an arena in our lab room (Fig.~\ref{fig:real_arena}): an area of about \qtyproduct{4 x 6}{m}, bounded by boxes, cupboards, shelves and a sofa, with a narrow passage between two parts of the area.
     Compared to the simulation, we reduced the speed of the robot to at most \SI{0.3}{m/s} and \SI{0.8}{rad/s}.
 
     \begin{figure}[ht]
         \centering
         \includegraphics[width=0.9\linewidth]{figures/arena.jpg}
-        \caption{The Robile in our arena in the lab, bounded by boxes and furniture.}
+        \caption{The Robile in our arena in the lab room, bounded by boxes and furniture.}
         \label{fig:real_arena}
     \end{figure}
 
-    \textbf{Task 1: Path and motion planning.}
-    % TODO: describe the results on the real robot (goals, errors, problems)
-    \begin{figure}[ht]
-        \centering
-        \figureplaceholder{RViz screenshot or photo of task 1 on the real robot}
-        \caption{Task 1 on the real robot.}
-        \label{fig:real_task1}
-    \end{figure}
+    \textbf{Real world explorer.}
+    The robot started in the arena without a map and explored it with the explorer and \emph{slam\_gmapping} (Fig.~\ref{fig:real_task3}).
+    It explored the first part of the arena, but it did not pass the narrow passage to the second part (see Sec.~\ref{sec:challenges:real_robot}).
+    Videos: \href{https://youtu.be/7wGQjqQ4EhQ}{Mapping in Lab; Real Robot}, \href{https://youtu.be/zNW6HkEr-Kk}{Mapping in Lab; Screenrecording}
 
-    \textbf{Task 2: Localisation.}
-    % TODO: describe the results on the real robot (map used, convergence, accuracy)
-    \begin{figure}[ht]
-        \centering
-        \figureplaceholder{RViz screenshot of the particles on the real robot}
-        \caption{Task 2 on the real robot.}
-        \label{fig:real_task2}
-    \end{figure}
-
-    \textbf{Task 3: Environment exploration.}
-    % TODO: describe the results on the real robot (explored area, map)
-    In the arena, the robot explored the first area, but it did not pass the narrow passage to the second area (see Sec.~\ref{sec:challenges:real_robot}).
     \begin{figure}[ht]
         \centering
         \includegraphics[width=0.6\linewidth, trim=150 160 120 65, clip]{figures/lab_map-5.png}
-        \caption{Map of the arena created by the exploration on the real robot (white: free, black: occupied, grey: unknown).}
+        \caption{Map of the arena created by the real world explorer (white: free, black: occupied, grey: unknown).}
         \label{fig:real_task3}
     \end{figure}
-
-    Videos: \href{https://youtu.be/7wGQjqQ4EhQ}{Mapping in Lab; Real Robot}, \href{https://youtu.be/zNW6HkEr-Kk}{Mapping in Lab; Screenrecording}
 
 \end{document}

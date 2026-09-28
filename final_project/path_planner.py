@@ -112,12 +112,14 @@ class PathPlanner(Node):
         self.update_pose_from_tf()
         start = self.get_free_start_cell(*self.map_to_cell_coords(self.x, self.y))
         goal = self.map_to_cell_coords(self.goal_x, self.goal_y)
-        inflation_cells = int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution))
-        astar = OccupancyGridAStar(self.grid, start, goal, inflation_cells)
-        path = astar.search()
-        if not path:
-            # Start or goal can be too close to an obstacle, try again without keeping a distance
-            path = OccupancyGridAStar(self.grid, start, goal).search()
+        # Start or goal can be too close to an obstacle, or a passage is narrower than twice the distance: then the
+        # distance is reduced step by step instead of dropping it at once, so that the path stays in the middle of a
+        # narrow passage instead of running along one of its walls
+        path = []
+        for inflation_cells in range(int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution)), -1, -1):
+            path = OccupancyGridAStar(self.grid, start, goal, inflation_cells).search()
+            if path:
+                break
         self.path = self.get_sampled_path_in_map_coords(path)
         self.current_waypoint = None
         if self.path:

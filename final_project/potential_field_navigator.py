@@ -41,7 +41,9 @@ STALL_BLOCK_TIME = 5.0   # s, a blocked rotation direction is not used for this 
 PASSAGE_MARGIN = 0.05    # m, if obstacles are close (e.g. in a narrow passage), the robot moves straight to the waypoint
 PASSAGE_STEP = 0.05      # without rotating as long as the footprint keeps this clearance on the way (checked in steps
 PASSAGE_ANGLE = math.pi / 3   # of PASSAGE_STEP) and the waypoint is within PASSAGE_ANGLE of the heading (in the
-PASSAGE_SPEED = 0.15     # m/s  field of view of the laser scanner)
+PASSAGE_SPEED = 0.15     # m/s  field of view of the laser scanner); if the clearance is already smaller, the robot
+MIN_PASSAGE_CLEARANCE = 0.02  # must not get closer than now (e.g. to move towards the middle of the passage), and not
+PASSAGE_TOLERANCE = 0.005     # below MIN_PASSAGE_CLEARANCE (PASSAGE_TOLERANCE for moving parallel to a wall)
 GOAL_SLOWDOWN_DIST = 0.3 # m, distance to the waypoint at which slowing down starts, otherwise the robot circles around it
 
 THRESHOLD_ROTATION = 0.1
@@ -289,15 +291,16 @@ class PotentialFieldNavigator(Node):
 
     def straight_motion_free(self, goal_x, goal_y):
         """ Check whether the footprint can move in a straight line without rotating to the given point (base_link
-        frame) while keeping PASSAGE_MARGIN to all obstacles """
+        frame) while keeping PASSAGE_MARGIN to all obstacles, or at least the current clearance if it is smaller """
         distance = math.hypot(goal_x, goal_y)
         if len(self.obstacle_points) == 0 or distance < ZERO_REPLACEMENT:
             return True
+        required = min(PASSAGE_MARGIN, self.min_clearance - PASSAGE_TOLERANCE)
         steps = np.minimum(np.arange(PASSAGE_STEP, distance + PASSAGE_STEP, PASSAGE_STEP), distance)
         offsets = np.column_stack((steps * goal_x / distance, steps * goal_y / distance))
         shifted = (self.obstacle_points[None, :, :] - offsets[:, None, :]).reshape(-1, 2)
         clearances, _ = self.get_footprint_clearance(shifted)
-        return bool(np.all(clearances >= PASSAGE_MARGIN))
+        return bool(np.all(clearances >= required))
 
     def rotation_stalled(self, direction, speed):
         """ Detect a rotation in place (direction +1 / -1, commanded angular speed) that does not turn the robot in
@@ -469,7 +472,7 @@ class PotentialFieldNavigator(Node):
         goal_base_x = cos * delta_x + sin * delta_y
         goal_base_y = -sin * delta_x + cos * delta_y
 
-        if not pos_reached and PASSAGE_MARGIN <= self.min_clearance < RHO_0 and \
+        if not pos_reached and MIN_PASSAGE_CLEARANCE <= self.min_clearance < RHO_0 and \
                 abs(math.atan2(goal_base_y, goal_base_x)) < PASSAGE_ANGLE and \
                 self.straight_motion_free(goal_base_x, goal_base_y):
             # Obstacles are close (e.g. the sides of a narrow passage), but the footprint can move straight to the

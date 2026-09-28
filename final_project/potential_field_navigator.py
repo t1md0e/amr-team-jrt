@@ -88,10 +88,11 @@ class PotentialFieldNavigator(Node):
         # Start time of moving away from an obstacle because a rotation in place is not possible
         self.escape_start = None
 
-        # Driven path (odom frame, newest last), current target when moving back along it, and the distance
-        # already moved back since the last successful rotation
+        # Driven path (odom frame, newest last), current target when moving back along it (and its index in the
+        # driven path), and the distance already moved back since the last successful rotation
         self.trail = []
         self.backup_target = None
+        self.backup_index = None
         self.backed_up = 0.0
 
         # Detection of rotations that are physically blocked (e.g. by an obstacle outside of the laser's field of
@@ -227,9 +228,11 @@ class PotentialFieldNavigator(Node):
         _, first = np.unique(np.floor(all_points / OBSTACLE_MEMORY_CELL), axis=0, return_index=True)
         self.memory_points, self.memory_times = all_points[first], all_times[first]
 
-        # odom -> base_link with the current pose; the current scan is used directly
+        # odom -> base_link with the current pose; the current scan is used directly, so only older points are
+        # taken from the memory
+        old = self.memory_points[self.memory_times < now]
         cos, sin = math.cos(self.theta), math.sin(self.theta)
-        delta_x, delta_y = self.memory_points[:, 0] - self.x, self.memory_points[:, 1] - self.y
+        delta_x, delta_y = old[:, 0] - self.x, old[:, 1] - self.y
         remembered = np.column_stack((cos * delta_x + sin * delta_y, -sin * delta_x + cos * delta_y))
         return np.vstack((points, remembered))
 
@@ -310,16 +313,19 @@ class PotentialFieldNavigator(Node):
         return 0.0
 
     def get_backup_target(self):
-        """ Point on the driven path about BACKUP_STEP behind the robot, if the footprint is free there
-        (with the current orientation, the robot moves back without rotating) """
+        """ Point on the driven path about BACKUP_STEP behind the robot and its index, if the footprint is free there
+        (with the current orientation, the robot moves back without rotating); the driven path is only shortened
+        once the point is reached """
         distance = 0.0
         last = (self.x, self.y)
-        while self.trail and distance < BACKUP_STEP:
-            point = self.trail.pop()
+        index = len(self.trail)
+        while index > 0 and distance < BACKUP_STEP:
+            index -= 1
+            point = self.trail[index]
             distance += math.hypot(point[0] - last[0], point[1] - last[1])
             last = point
         if distance < BACKUP_TOLERANCE:
-            return None
+            return None, None
 
         # Obstacle points relative to the footprint at the target (base_link frame of the current pose)
         cos, sin = math.cos(self.theta), math.sin(self.theta)
@@ -328,14 +334,14 @@ class PotentialFieldNavigator(Node):
         if len(self.obstacle_points):
             clearances, _ = self.get_footprint_clearance(self.obstacle_points - np.array([offset_x, offset_y]))
             if np.any(clearances < ROTATION_MARGIN):
-                return None
-        return last
+                return None, None
+        return last, index
 
     def back_up_or_escape(self, msg):
         """ Rotating in place is blocked in both directions: move back along the driven path (known to be free) in
         small steps and try to rotate again after every step; if that is not possible, move away / wait """
         if self.backup_target is None and self.backed_up < MAX_BACKUP:
-            self.backup_target = self.get_backup_target()
+            self.backup_target, self.backup_index = self.get_backup_target()
             if self.backup_target is not None:
                 self.get_logger().warning(f'\nNot enough space to rotate, moving back along the driven path '
                                           f'({self.backed_up + BACKUP_STEP:.1f} m)')
@@ -348,6 +354,7 @@ class PotentialFieldNavigator(Node):
         distance = math.hypot(delta_x, delta_y)
         if distance < BACKUP_TOLERANCE:
             # Step done, the rotation is checked again in the next control step
+            del self.trail[self.backup_index:]
             self.backup_target = None
             self.backed_up += BACKUP_STEP
             msg.linear.x = msg.linear.y = msg.angular.z = 0.0
@@ -476,11 +483,17 @@ class PotentialFieldNavigator(Node):
 
             # Rotate in place if the desired direction is to the side or behind, driving would lead to circles
             ROTATE_IN_PLACE_ANGLE = math.pi / 2
+            safety_clearance = SAFETY_CLEARANCE
             if abs(desired_theta) > ROTATE_IN_PLACE_ANGLE:
                 msg.linear.x = 0.0
                 direction = self.get_committed_direction(desired_theta, 'driving')
                 if direction != 0.0 and not self.rotation_stalled(direction, omega):
                     msg.angular.z = direction * abs(omega)
+                    # The rotation was checked to keep ROTATION_MARGIN, moving away before would interrupt it
+                    safety_clearance = ROTATION_MARGIN
+                    if self.min_clearance < SAFETY_CLEARANCE:
+                        self.get_logger().info(f'\nRotating close to an obstacle ({self.min_clearance:.2f} m)',
+                                               throttle_duration_sec=1.0)
                     self.escape_start = None
                     self.backup_target = None
                     self.backed_up = 0.0
@@ -489,7 +502,7 @@ class PotentialFieldNavigator(Node):
                     self.back_up_or_escape(msg)
 
             # Too close to an obstacle: only move away from it
-            if self.min_clearance < SAFETY_CLEARANCE:
+            if self.min_clearance < safety_clearance:
                 self.escape(msg)
                 self.get_logger().warning(f'\nObstacle {self.min_clearance:.2f} m from the robot, moving away')
 

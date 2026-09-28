@@ -44,18 +44,40 @@
     \label{sec:project_description:motivation}
     % show what we have learned in the course Autonomous Mobile Robots and experience in realizing a realistic real life project.
 
-    Describe the context of your work and the motivation for it.
+    During the course Autonomous Mobile Robots, we implemented several basic navigation methods, but mostly in simulation.
+    The motivation of this project is to show what we have learned in the course and to bring these methods to a real robot.
+    This gives us experience with a realistic project, where the robot, its sensors and the environment do not behave as ideally as in the simulation.
 
     \subsection{Problem Statement}
     \label{sec:project_description:problem_statement}
     % brief general task description; what was expected; brief summery of the original readme
 
-    Describe the problem you are addressing in the work.
+    The task is to deploy three functionalities from the course on the Robile platform, a four-wheeled omnidirectional robot with a laser scanner at its front.
+    The three parts build on each other:
+    \begin{enumerate}
+        \item \textbf{Path and motion planning:} The potential field planner from the assignments has to be ported to the real robot. It is combined with a global path planner (e.g. A*), which finds a rough path of waypoints on a map. The potential field planner then moves the robot from waypoint to waypoint and avoids obstacles.
+        \item \textbf{Localisation:} We have to implement our own particle filter (Monte Carlo localisation) that estimates the pose of the robot in an existing map.
+        \item \textbf{Environment exploration:} The robot has to explore an unknown environment on its own. An exploration component selects the poses to explore, ideally at the map fringe (the boundary between the explored and the unexplored region), and a SLAM component creates the map.
+    \end{enumerate}
+    All functionalities first had to work in the simulation and then on the real robot.
 
     \subsection{Proposed Approach}
     \label{sec:project_description:proposed_approach}
     % which algorithsms we chose to solve the task; the biref idea of each algorithm
 
-    Write a short summary of your proposed approach.
+    We implemented all parts as nodes of one ROS~2 (Humble) package in Python (Fig.~\ref{fig:overview}):
+    \begin{itemize}
+        \item \textbf{A* path planner:} A* searches the shortest path on the occupancy grid map. The obstacles are grown by the robot radius (configuration space), so that the path keeps a distance to walls. The path is sampled into waypoints, which are sent to the navigator one after the other.
+        \item \textbf{Potential field navigator:} The waypoint attracts the robot, and the closest obstacle measured by the laser scanner repels it. The sum of both forces gives the driving direction and speed.
+        \item \textbf{Particle filter:} Many particles represent possible poses of the robot. They are moved with the odometry (motion model), weighted by comparing the laser scan with the map (measurement model) and resampled according to their weights.
+        \item \textbf{Fringe-based explorer:} The explorer selects the closest reachable cell at the map fringe as the next goal. The map itself is created by \emph{slam\_gmapping}, an existing SLAM implementation based on a particle filter.
+    \end{itemize}
+
+    \begin{figure}[ht]
+        \centering
+        \figureplaceholder{overview of the nodes and topics (explorer $\rightarrow$ /goal $\rightarrow$ path\_planner $\rightarrow$ /waypoint $\rightarrow$ potential\_field\_navigator $\rightarrow$ /cmd\_vel; particle\_filter or slam\_gmapping $\rightarrow$ map $\rightarrow$ odom)}
+        \caption{Overview of the implemented nodes and the topics between them.}
+        \label{fig:overview}
+    \end{figure}
 
 \end{document}

@@ -5,6 +5,17 @@
     \section{Conclusions}
     \label{sec:conclusions}
 
-    Write a short summary of your conclusions and the lessons learned during the project.
-    
+    We implemented path and motion planning, localisation and exploration for the Robile and combined them in one ROS~2 package.
+    In the simulation, all three tasks worked well: the robot reached its goals with an error of about \SI{0.1}{m}, the particle filter found the pose of the robot without a start pose, and the explorer created a complete map of the environment in about two minutes.
+
+    The step from the simulation to the real robot was harder than expected.
+    Most problems were not in the algorithms themselves, but in the details: frame names, clock times, invalid sensor data, the real size of the robot and the network setup.
+    The main lessons we learned are:
+    \begin{itemize}
+        \item The real size and shape of the robot matter. A robot that is modelled as a point touches walls with its corners.
+        \item A simulation environment should be as similar as possible to the real test environment. Rebuilding our arena in the simulation helped us to find the causes of the problems with the narrow passage.
+        \item Logs and visualisation (RViz) are essential to find the causes of problems, especially on the real robot.
+        \item Simple potential fields have limits in narrow passages. A robot that aligns itself with the passage before entering it, or a local planner that considers the shape of the robot, would be the next improvement.
+    \end{itemize}
+
 \end{document}

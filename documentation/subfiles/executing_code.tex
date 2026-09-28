@@ -5,18 +5,154 @@
     \section{Executing the Code}
     \label{sec:executing_code}
 
-    This is a section in which you describe how you executed your code.
-    Start with describing the environment and then describe how you executed the code in the simulation and on the real robot.
-    this section is to show the results of the executed code. 
+    % Start with describing the environment and then describe how you executed the code in the simulation and on the real robot.
+    % this section is to show the results of the executed code.
+
+    We first tested all tasks in the simulation and then on the real robot.
+    This section describes both environments and shows the results.
 
     \subsection{The Simulation}
     \label{sec:executing_code:simulation}
 
     % dont forget to add pictures and videos of the simulation
 
+    \textbf{Environment.}
+    We used the Robile simulation in Gazebo Classic with ROS~2 Humble.
+    It ran in a Docker container on a Mac, which emulates the amd64 architecture, because Gazebo Classic is not available for ARM processors.
+    As the Gazebo interface did not open in the container, we only ran the simulation server and used RViz to see the robot, the laser scan, the map and the particles.
+    Most tests were done in the world \emph{closed\_walls} (about \qtyproduct{7 x 7}{m}) and some in a house world as a harder test with open doors.
+
+    \textbf{Task 1: Path and motion planning.}
+    For this task, the robot was localised with our particle filter in a map created before.
+    We sent three goals one after the other (Fig.~\ref{fig:sim_task1}).
+    The robot reached all goals without collisions in about \SIrange{30}{50}{s} each, with a final position error of about \SIrange{0.02}{0.16}{m}.
+    Video: \videourl{task1_navigation.mp4}
+
+    \begin{figure*}[t]
+        \centering
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task1_a.png}
+            \caption{Start}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task1_b.png}
+            \caption{On the way to a goal}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task1_c.png}
+            \caption{Goal reached}
+        \end{subfigure}
+        \caption{Task 1 in the simulation (RViz): The robot follows the waypoints of the A* path to the goal (purple arrow).}
+        \label{fig:sim_task1}
+    \end{figure*}
+
+    \textbf{Task 2: Localisation.}
+    We started the particle filter without a start pose, so the particles were spread over the whole map (Fig.~\ref{fig:sim_task2}).
+    While the robot was moving, the particles converged to the correct pose after about \SIrange{15}{90}{s}, depending on the start position.
+    After that, the error of the estimated position was about \SIrange{0.01}{0.15}{m}.
+    In some runs, the filter first converged to a wrong but similar-looking place and corrected itself after \SIrange{30}{80}{s} thanks to the random particles.
+    Video: \videourl{task2_localisation.mp4}
+
+    \begin{figure*}[t]
+        \centering
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task2_a.png}
+            \caption{Particles spread over the map}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task2_b.png}
+            \caption{Robot is moving}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task2_c.png}
+            \caption{Particles converged}
+        \end{subfigure}
+        \caption{Task 2 in the simulation: global localisation with the particle filter (red arrows are particles).}
+        \label{fig:sim_task2}
+    \end{figure*}
+
+    \textbf{Task 3: Environment exploration.}
+    The robot started in an unknown environment and explored it on its own (Fig.~\ref{fig:sim_task3}).
+    In the final runs in \emph{closed\_walls}, the complete map (about \SI{52}{m^2}) was created in about \SIrange{90}{120}{s}, and the exploration stopped by itself when no reachable fringe was left.
+    Video: \videourl{task3_exploration.mp4}
+
+    \begin{figure*}[t]
+        \centering
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task3_a.png}
+            \caption{Start}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task3_b.png}
+            \caption{During the exploration}
+        \end{subfigure}
+        \hfill
+        \begin{subfigure}{0.32\linewidth}
+            \includegraphics[width=\linewidth]{figures/sim/task3_c.png}
+            \caption{Final map}
+        \end{subfigure}
+        \caption{Task 3 in the simulation: The map created by gmapping grows while the explorer selects goals at the map fringe.}
+        \label{fig:sim_task3}
+    \end{figure*}
+
     \subsection{The Real Robot}
     \label{sec:executing_code:real_robot}
 
     % dont forget to add pictures and videos of the real robot
+
+    \textbf{Environment.}
+    In the lab, we used a Robile with four wheels and a laser scanner at its front.
+    The ROS~2 nodes ran on a laptop with Ubuntu, which was connected to the robot via WLAN.
+    We tested in the corridor of the university with boxes as obstacles (Fig.~\ref{fig:real_environment}) and in an arena that we built ourselves: two rectangular areas connected by a narrow passage.
+    Compared to the simulation, we reduced the speed of the robot to at most \SI{0.3}{m/s} and \SI{0.8}{rad/s}.
+
+    \begin{figure}[ht]
+        \centering
+        \includegraphics[width=0.9\linewidth]{figures/real_corridor.jpg}
+        \caption{The Robile in the corridor, with boxes as obstacles.}
+        \label{fig:real_environment}
+    \end{figure}
+
+    \begin{figure}[ht]
+        \centering
+        \figureplaceholder{photo of the arena with the narrow passage}
+        \caption{Our arena in the lab: two areas connected by a narrow passage.}
+        \label{fig:real_arena}
+    \end{figure}
+
+    \textbf{Task 1: Path and motion planning.}
+    % TODO: describe the results on the real robot (goals, errors, problems)
+    \begin{figure}[ht]
+        \centering
+        \figureplaceholder{RViz screenshot or photo of task 1 on the real robot}
+        \caption{Task 1 on the real robot.}
+        \label{fig:real_task1}
+    \end{figure}
+
+    \textbf{Task 2: Localisation.}
+    % TODO: describe the results on the real robot (map used, convergence, accuracy)
+    \begin{figure}[ht]
+        \centering
+        \figureplaceholder{RViz screenshot of the particles on the real robot}
+        \caption{Task 2 on the real robot.}
+        \label{fig:real_task2}
+    \end{figure}
+
+    \textbf{Task 3: Environment exploration.}
+    % TODO: describe the results on the real robot (explored area, map)
+    In the arena, the robot explored the first area, but it did not pass the narrow passage to the second area (see Sec.~\ref{sec:challenges:real_robot}).
+    \begin{figure}[ht]
+        \centering
+        \figureplaceholder{map of the lab / arena created by the exploration}
+        \caption{Map created by the exploration on the real robot.}
+        \label{fig:real_task3}
+    \end{figure}
+
+    % TODO: add links to videos of the real robot, e.g. \url{...}
 
 \end{document}

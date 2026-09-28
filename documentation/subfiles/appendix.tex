@@ -28,6 +28,18 @@
     In particular, name the AI assistant(s) that you used and how they were used (e.g. which prompts were used, and for which parts of the project).
     \end{comment}
 
-    how i used ai
+    \subsection*{Use of AI Assistants}
+
+    % how i used ai
+    We used the AI assistant Claude Code (Anthropic) during the whole project. It was used for the following parts:
+    \begin{itemize}
+        \item \textbf{Code:} Claude Code wrote the particle filter (task 2), the explorer (task 3) and the launch files, based on the methods of the course. It also made most of the later fixes to the path planner and the potential field navigator (task 1), which were written by our team.
+        \item \textbf{Debugging:} We gave Claude Code the logs of the simulation and of the real robot, and it analysed them and suggested fixes, e.g. for the clock difference, the corner collisions and the narrow passage.
+        \item \textbf{Simulation and tests:} Claude Code set up the Docker simulation, wrote test scripts that measured e.g. the explored area and the localisation error, and ran the tests in the simulation. It also helped out with solving cryptic errors.
+        \item \textbf{Git:} It created branches, commits and pull request descriptions. All commits made with its help are marked with ``Co-Authored-By: Claude''.
+        \item \textbf{Documentation:} It wrote parts of the README and a first version of this report, based on our notes in the report, the README, the code and our previous chats. We reviewed and adapted the text.
+    \end{itemize}
+    Typical prompts were short descriptions of the task or the problem, e.g. ``the robot does not get through the narrow passage, it turns left and right in front of it'' together with the logs of the robot.
+    All results were checked by us in the simulation or on the real robot.
 
 \end{document}

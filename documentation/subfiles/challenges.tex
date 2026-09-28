@@ -5,27 +5,84 @@
     \section{Challenges}
     \label{sec:challenges}
 
-    Describe the challenges you faced during the project and how you overcame them.
+    This section describes the biggest problems we faced during the project and how we solved them.
 
-    \subsection{x}
-    \label{sec:challenges:x}
+    \subsection{Simulation}
+    \label{sec:challenges:simulation}
 
-    //challenges in the simulation
+    % challenges while executing the task in the simulation and how to fix the problem. briefly decribe the biggest issues and how you solved them.
+
+    \textbf{Setup.}
+    The simulation ran in a Docker container with emulated amd64 architecture, which caused several problems: the Gazebo interface did not open, RViz sometimes froze, and older processes were still running, which interfered with new runs.
+    We therefore only used the Gazebo server with RViz and restarted the container before every test.
+    In addition, the ROS~2 port of gmapping sometimes stopped after the first scan, so we restarted it automatically in this case.
+
+    \textbf{Navigation.}
+    At first, the robot drove in circles around the waypoints or got stuck in front of walls.
+    The reason was that the repulsive forces of all laser points were summed up, which made the repulsion of a wall 10 to 20 times stronger than the attraction.
+    We solved this by using only the closest obstacle, by slowing down close to the waypoint and by rotating in place if the waypoint is to the side or behind the robot.
+    Planning the path in the configuration space kept the path away from walls.
+
+    \textbf{Localisation.}
+    In symmetric environments, the particle filter sometimes converged to a wrong place, because a single scan fits several places of the map.
+    It helped to resample only after the robot had moved, to use more particles (2000 instead of 500) and a larger measurement noise ($\sigma = \SI{0.4}{m}$ instead of \SI{0.2}{m}).
+    Look-alike rooms are still a weak point, but the random particles usually correct a wrong estimate after some time.
+
+    \textbf{Exploration.}
+    The explorer first chooses goals very close to the robot, so the robot moved slowly along the fringe, and in the house world it left the building through an open door.
+    We added a minimal goal distance of \SI{1}{m}, an optional exploration boundary and a stopping criteria.
+    We also found, that the explorer and the path planner converted coordinates to map cells differently, which resulted in failed path searches.
 
     \subsection{Connecting to the Robot}
     \label{sec:challenges:connecting_to_the_robot}
 
-    //challenges in connecting to the real robot
+    % challenges in connecting to the real robot. briefly describe the problem we had connecting to the robile with the laptop and the timestamps
+    % and later the difficulties with the communication of macos and the docker container to the robile and that we didnt solve it.
 
-    \subsection{y}
-    \label{sec:challenges:y}
+    \textbf{Ubuntu laptop.}
+    With the Ubuntu laptop, the robot did not move at first.
+    One reason was that our navigator expected the name of the laser frame from the simulation (\emph{base\_laser\_front\_link}), while it is called \emph{base\_laser} on the real robot. Now, the frame is taken from the scan messages.
+    The second reason was that the clock of the laptop was about \SI{59}{s} ahead of the clock of the robot.
+    Because of the different timestamps, the transforms between the frames could never be found, and the explorer did not send any goals.
+    After we set the clock of the laptop back by this difference, the robot started moving.
 
-    //challenges in the execution of the code on the real robot from translation from the simulation to the real world
+    \textbf{macOS and Docker.}
+    We also tried to control the robot via a Mac-book, where ROS~2 runs in a Docker container.
+    Docker on macOS runs the containers in a virtual machine, which blocks the automatic discovery of ROS~2 (multicast).
+    We configured the communication to send messages directly to the robot (unicast). The robot and the container found each other, but no topics have arrived.
+    The reason is that Docker on macOS drops network packets larger than about 1400 bytes, which is the case for most ROS~2 messages.
+    A relay program that forwarded the packets did not solve the problem either, so we went back to the Ubuntu laptop.
+
+    \subsection{From the Simulation to the Real Robot}
+    \label{sec:challenges:real_robot}
+
+    % challenges in the execution of the code on the real robot from translation from the simulation to the real world. what problems we faced and how we fixed them.
+    % stick to the most important problems, keep it precise
+
+    \textbf{Sensor data.}
+    The real laser scanner reports invalid measurements as 0, which created huge repulsive forces. These measurements are now ignored, by removing those outliers. The range of the real scanner (up to \SI{60}{m}) is also much larger than in the simulation, so we limited the ray casting of the particle filter to \SI{10}{m}.
+
+    \textbf{Collisions with the corners.}
+    During a rotation close to a wall, the robot sometimes collided with the wall with one of its corners, because the navigator treated the robot as a one dimensional point.
+    We added a rectangular footprint of the robot: the clearance is measured from the footprint, and the robot now only rotates with enough clearance.
+
+    \textbf{Narrow passage.}
+    In our arena, the robot did not pass the narrow passage (about \SI{0.8}{m} wide, estimated from the laser data).
+    It turned left and right in front of it, moved back and tried again, until the explorer gave up the goal.
+    The reason was the repulsion of both sides of the passage, which was much stronger than the attraction of the waypoint and turned the robot away.
+    We rebuilt the arena in the simulation and made several changes: the robot now moves straight through the passage if the way is free, the explorer does not turn around inside the passage, and the path stays in the middle of the passage.
+    During these tests, we also found that the obstacle memory of the navigator almost never worked, because the laser scan was a few milliseconds newer than the odometry. After fixing this, the robot no longer touched the walls of the passage when rotating.
+    However, the robot still gets stuck if it enters the passage at an angle, as the passage is then only a few centimetres wider than the robot.
+    We estimated that passages of at least \SI{0.9}{m} are working. These changes have not been tested on the real robot yet.
 
     \subsection{Time Management}
     \label{sec:challenges:time_management}
 
-    //challenges in time management and Rene didnt work at all on the project
+    % challenges in time management. we were dependant on work of a teammember that didnt to work so the whole project got delayed and was done last minute.
+    % that was a reason we were dependent to use ai (but i also used because its a good tool)
 
+    Our work depended on parts of the project that were planned to be done by one team member.
+    As these parts were not done, the whole project was delayed, and most of the work had to be done shortly before the deadline. This was due to spontaneous events and appointments, which resulted in a lack of time.
+    This was one reason why we relied on an AI assistant (see Appendix). Apart from that, we also used it because it is a helpful tool for programming and debugging.
 
 \end{document}

@@ -38,6 +38,11 @@ STALL_RATIO = 0.1        # ... and counts as blocked if the robot turns less tha
                          # (it can wiggle or creep along an obstacle, so the net rotation in the commanded direction
                          # is compared with the commanded one)
 STALL_BLOCK_TIME = 5.0   # s, a blocked rotation direction is not used for this time, the other one is tried first
+PASSAGE_MARGIN = 0.05    # m, if obstacles are close (e.g. in a narrow passage), the robot moves straight to the waypoint
+PASSAGE_STEP = 0.05      # without rotating as long as the footprint keeps this clearance on the way (checked in steps
+PASSAGE_ANGLE = math.pi / 3   # of PASSAGE_STEP) and the waypoint is within PASSAGE_ANGLE of the heading (in the
+PASSAGE_SPEED = 0.15     # m/s  field of view of the laser scanner)
+GOAL_SLOWDOWN_DIST = 0.3 # m, distance to the waypoint at which slowing down starts, otherwise the robot circles around it
 
 THRESHOLD_ROTATION = 0.1
 THRESHOLD_POSE = 0.1
@@ -282,6 +287,18 @@ class PotentialFieldNavigator(Node):
         clearances, _ = self.get_footprint_clearance(rotated)
         return bool(np.all(clearances >= ROTATION_MARGIN))
 
+    def straight_motion_free(self, goal_x, goal_y):
+        """ Check whether the footprint can move in a straight line without rotating to the given point (base_link
+        frame) while keeping PASSAGE_MARGIN to all obstacles """
+        distance = math.hypot(goal_x, goal_y)
+        if len(self.obstacle_points) == 0 or distance < ZERO_REPLACEMENT:
+            return True
+        steps = np.minimum(np.arange(PASSAGE_STEP, distance + PASSAGE_STEP, PASSAGE_STEP), distance)
+        offsets = np.column_stack((steps * goal_x / distance, steps * goal_y / distance))
+        shifted = (self.obstacle_points[None, :, :] - offsets[:, None, :]).reshape(-1, 2)
+        clearances, _ = self.get_footprint_clearance(shifted)
+        return bool(np.all(clearances >= PASSAGE_MARGIN))
+
     def rotation_stalled(self, direction, speed):
         """ Detect a rotation in place (direction +1 / -1, commanded angular speed) that does not turn the robot in
         that direction, i.e. that is physically blocked """
@@ -447,7 +464,28 @@ class PotentialFieldNavigator(Node):
         # Check whether current position is within radial threshold around goal position
         pos_reached = (delta_x ** 2 + delta_y ** 2) < THRESHOLD_POSE ** 2
 
-        if not pos_reached:
+        # Waypoint in base_link frame
+        cos, sin = math.cos(self.theta), math.sin(self.theta)
+        goal_base_x = cos * delta_x + sin * delta_y
+        goal_base_y = -sin * delta_x + cos * delta_y
+
+        if not pos_reached and PASSAGE_MARGIN <= self.min_clearance < RHO_0 and \
+                abs(math.atan2(goal_base_y, goal_base_x)) < PASSAGE_ANGLE and \
+                self.straight_motion_free(goal_base_x, goal_base_y):
+            # Obstacles are close (e.g. the sides of a narrow passage), but the footprint can move straight to the
+            # waypoint: move there without rotating (the robot is omnidirectional), otherwise the repulsion of the
+            # sides turns the robot away from the passage and it never passes through
+            distance = math.hypot(goal_base_x, goal_base_y)
+            speed = min(PASSAGE_SPEED, self.max_linear_speed) * min(1.0, distance / GOAL_SLOWDOWN_DIST)
+            msg.linear.x = speed * goal_base_x / distance
+            msg.linear.y = speed * goal_base_y / distance
+            self.escape_start = None
+            self.backup_target = None
+            self.backed_up = 0.0
+            self.get_logger().info(f'\nObstacle {self.min_clearance:.2f} m from the robot, but the way is free, '
+                                   f'moving straight to the waypoint', throttle_duration_sec=1.0)
+
+        elif not pos_reached:
             # Get total velocities (base_link frame)
             vel_x = self.attraction[0] + self.repulsion[0]
             vel_y = self.attraction[1] + self.repulsion[1]
@@ -474,7 +512,6 @@ class PotentialFieldNavigator(Node):
             obs_slow = 1.0 / (1.0 + OBS_SLOWDOWN_K * rep_mag)
 
             # 3) Slow down close to the waypoint, otherwise the robot circles around it
-            GOAL_SLOWDOWN_DIST = 0.3    # distance at which slowing down starts (tune)
             goal_slow = min(1.0, math.hypot(delta_x, delta_y) / GOAL_SLOWDOWN_DIST)
 
             # Final forward speed

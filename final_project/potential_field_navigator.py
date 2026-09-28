@@ -21,7 +21,14 @@ RHO_0 = 0.6         # repulsion is active below this clearance between robot foo
 
 SAFETY_CLEARANCE = 0.1   # below this clearance, the robot only moves away from the obstacle
 ROTATION_MARGIN = 0.05   # additional clearance needed to rotate in place
+ROTATION_STEP = 0.1      # angle step (rad) for checking whether a rotation in place hits an obstacle
 ESCAPE_SPEED = 0.1       # speed for moving away from an obstacle
+ESCAPE_TIMEOUT = 3.0     # s, if rotating is still not possible after moving away this long, the robot waits
+OBSTACLE_MEMORY_TIME = 10.0   # s, laser points are remembered this long (obstacles next to / behind the robot
+OBSTACLE_MEMORY_RANGE = 2.0   # m, within this distance, are outside of the laser's field of view)
+OBSTACLE_MEMORY_CELL = 0.05   # m, remembered points are thinned out to one per grid cell
+STALL_TIME = 2.0         # s, a commanded rotation that does not change the orientation this long counts as blocked
+STALL_ANGLE = 0.05       # rad, minimum change of the orientation within STALL_TIME while rotating
 
 THRESHOLD_ROTATION = 0.1
 THRESHOLD_POSE = 0.1
@@ -60,10 +67,22 @@ class PotentialFieldNavigator(Node):
         self.footprint = None
 
         # Clearance to the closest obstacle and unit vector from the footprint towards it (base_link frame),
-        # and whether an obstacle is inside the circle swept by the corners when rotating in place
+        # and all obstacle points outside of the footprint (base_link frame) for checking rotations in place
         self.min_clearance = math.inf
         self.obstacle_direction = 0.0, 0.0
-        self.rotation_blocked = False
+        self.obstacle_points = np.zeros((0, 2))
+
+        # Remembered laser points (odom frame) and the time they were measured
+        self.memory_points = np.zeros((0, 2))
+        self.memory_times = np.zeros(0)
+
+        # Start time of moving away from an obstacle because a rotation in place is not possible
+        self.escape_start = None
+
+        # Detection of rotations that are physically blocked (e.g. by an obstacle outside of the laser's field of
+        # view): start time and orientation of the current rotation in place
+        self.rotation_start = None
+        self.rotation_blocked_until = 0.0
         self.odom_base_transform = None
         self.map_odom_transform = None
 
@@ -106,6 +125,7 @@ class PotentialFieldNavigator(Node):
         goal_yaw = euler_from_quaternion([goal_quat.x, goal_quat.y, goal_quat.z, goal_quat.w])[2]
         self.waypoint = (msg.pose.position.x, msg.pose.position.y, goal_yaw)
         self.has_goal = True
+        self.escape_start = None
 
     def transform_waypoint(self):
         """ Transform the waypoint from map frame to odom frame with the current map_odom transform """
@@ -130,7 +150,7 @@ class PotentialFieldNavigator(Node):
         valid = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
         coords_polar = np.column_stack((ranges[valid], angles[valid]))
         coords_clean = np_polar2cart(coords_polar)
-        coords_transformed = apply_transform(coords_clean, self.laser_base_transform)
+        coords_transformed = self.update_obstacle_memory(apply_transform(coords_clean, self.laser_base_transform))
 
         # Points inside the footprint are reflections from the robot itself
         clearances, closest_points = self.get_footprint_clearance(coords_transformed)
@@ -138,10 +158,10 @@ class PotentialFieldNavigator(Node):
         coords_transformed, clearances, closest_points = \
             coords_transformed[outside], clearances[outside], closest_points[outside]
 
+        self.obstacle_points = coords_transformed
         if len(coords_transformed) == 0:
             self.repulsion = 0.0, 0.0
             self.min_clearance = math.inf
-            self.rotation_blocked = False
             return
 
         # Repulsive field depends on the minimum distance between the robot footprint and an obstacle
@@ -152,10 +172,29 @@ class PotentialFieldNavigator(Node):
         self.obstacle_direction = tuple(delta / max(np.hypot(delta[0], delta[1]), ZERO_REPLACEMENT))
         self.repulsion = self.get_repulsion(self.min_clearance, *self.obstacle_direction)
 
-        # When rotating in place, the corners sweep a circle around base_link
-        front, rear, half_width = self.footprint
-        rotation_radius = math.hypot(max(front, rear), half_width) + ROTATION_MARGIN
-        self.rotation_blocked = bool(np.any(np.hypot(coords_transformed[:, 0], coords_transformed[:, 1]) < rotation_radius))
+
+    def update_obstacle_memory(self, points):
+        """ Add the current laser points (base_link frame) to the obstacle memory and return all remembered points
+        in base_link frame, so that obstacles that have left the laser's field of view are still considered """
+        now = self.get_clock().now().nanoseconds * 1e-9
+        cos, sin = math.cos(self.theta), math.sin(self.theta)
+
+        # base_link -> odom with the current odometry pose
+        points_odom = np.column_stack((self.x + cos * points[:, 0] - sin * points[:, 1],
+                                       self.y + sin * points[:, 0] + cos * points[:, 1]))
+        all_points = np.vstack((points_odom, self.memory_points))
+        all_times = np.concatenate((np.full(len(points_odom), now), self.memory_times))
+
+        # Forget old and far away points, keep the newest point per grid cell
+        keep = (now - all_times < OBSTACLE_MEMORY_TIME) & \
+            (np.hypot(all_points[:, 0] - self.x, all_points[:, 1] - self.y) < OBSTACLE_MEMORY_RANGE)
+        all_points, all_times = all_points[keep], all_times[keep]
+        _, first = np.unique(np.floor(all_points / OBSTACLE_MEMORY_CELL), axis=0, return_index=True)
+        self.memory_points, self.memory_times = all_points[first], all_times[first]
+
+        # odom -> base_link
+        delta_x, delta_y = self.memory_points[:, 0] - self.x, self.memory_points[:, 1] - self.y
+        return np.column_stack((cos * delta_x + sin * delta_y, -sin * delta_x + cos * delta_y))
 
     def get_footprint_clearance(self, points):
         """ Get the distance of every point (base_link frame) to the rectangular footprint and the closest
@@ -189,6 +228,66 @@ class PotentialFieldNavigator(Node):
         msg.linear.x = -ESCAPE_SPEED * self.obstacle_direction[0]
         msg.linear.y = -ESCAPE_SPEED * self.obstacle_direction[1]
         msg.angular.z = 0.0
+
+    def rotation_free(self, angle):
+        """ Check whether the footprint hits an obstacle when rotating in place by the given angle: rotating the
+        robot by an angle corresponds to rotating the obstacle points by the negative angle in base_link """
+        if len(self.obstacle_points) == 0:
+            return True
+        steps = np.arange(ROTATION_STEP, abs(angle) + ROTATION_STEP, ROTATION_STEP)
+        thetas = -math.copysign(1.0, angle) * np.minimum(steps, abs(angle))
+        cos, sin = np.cos(thetas)[:, None], np.sin(thetas)[:, None]
+        x, y = self.obstacle_points[:, 0][None, :], self.obstacle_points[:, 1][None, :]
+        rotated = np.stack((cos * x - sin * y, sin * x + cos * y), axis=-1).reshape(-1, 2)
+        clearances, _ = self.get_footprint_clearance(rotated)
+        return bool(np.all(clearances >= ROTATION_MARGIN))
+
+    def rotation_stalled(self, rotating):
+        """ Detect a rotation in place that does not change the orientation, i.e. that is physically blocked """
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if not rotating:
+            self.rotation_start = None
+            return False
+        if self.rotation_start is None:
+            self.rotation_start = (now, self.theta)
+            return False
+        start_time, start_theta = self.rotation_start
+        turned = abs(math.atan2(math.sin(self.theta - start_theta), math.cos(self.theta - start_theta)))
+        if turned > STALL_ANGLE:
+            self.rotation_start = (now, self.theta)
+            return False
+        if now - start_time > STALL_TIME:
+            self.get_logger().warning(f'\nRotation is blocked (orientation does not change), treating it as no space')
+            self.rotation_start = None
+            self.rotation_blocked_until = now + ESCAPE_TIMEOUT
+            return True
+        return False
+
+    def get_rotation_direction(self, angle):
+        """ Direction (+1 / -1) in which the robot can rotate by the given angle, the other way round if the short
+        way is blocked; 0 if both are blocked (or a rotation was just physically blocked) """
+        if self.get_clock().now().nanoseconds * 1e-9 < self.rotation_blocked_until:
+            return 0.0
+        if self.rotation_free(angle):
+            return math.copysign(1.0, angle)
+        other_way = angle - math.copysign(2 * math.pi, angle)
+        if self.rotation_free(other_way):
+            return math.copysign(1.0, other_way)
+        return 0.0
+
+    def escape_or_wait(self, msg):
+        """ Rotating in place is not possible: move away from the closest obstacle for a limited time, then wait
+        (e.g. until the explorer selects another goal), instead of alternating between rotating and moving away """
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self.escape_start is None:
+            self.escape_start = now
+            self.get_logger().warning(f'\nNot enough space to rotate, moving away from the closest obstacle')
+        if now - self.escape_start < ESCAPE_TIMEOUT:
+            self.escape(msg)
+        else:
+            msg.linear.x = msg.linear.y = msg.angular.z = 0.0
+            self.get_logger().warning(f'\nStill not enough space to rotate, waiting for another waypoint',
+                                      throttle_duration_sec=2.0)
 
     def control_loop(self):
         if self.laser_frame is None:
@@ -276,9 +375,16 @@ class PotentialFieldNavigator(Node):
             ROTATE_IN_PLACE_ANGLE = math.pi / 2
             if abs(desired_theta) > ROTATE_IN_PLACE_ANGLE:
                 msg.linear.x = 0.0
-                if self.rotation_blocked:
-                    # A corner would hit the obstacle, first move away from it
-                    self.escape(msg)
+                direction = self.get_rotation_direction(desired_theta)
+                if direction != 0.0 and not self.rotation_stalled(True):
+                    msg.angular.z = direction * abs(omega)
+                    self.escape_start = None
+                else:
+                    # A corner would hit an obstacle in both directions
+                    self.escape_or_wait(msg)
+
+            if abs(desired_theta) <= ROTATE_IN_PLACE_ANGLE:
+                self.rotation_stalled(False)
 
             # Too close to an obstacle: only move away from it
             if self.min_clearance < SAFETY_CLEARANCE:
@@ -288,15 +394,21 @@ class PotentialFieldNavigator(Node):
             self.get_logger().info(f'\nforces: ({vel_x:.2f}, {vel_y:.2f})')
 
         elif abs(delta_theta) > THRESHOLD_ROTATION:
-            if self.rotation_blocked:
+            direction = self.get_rotation_direction(delta_theta)
+            if direction == 0.0 or self.rotation_stalled(True):
                 # Waypoint is too close to an obstacle to rotate to the desired orientation, stay
-                self.get_logger().warning(f'\nNot enough space to rotate at the waypoint, keeping the orientation')
+                self.get_logger().warning(f'\nNot enough space to rotate at the waypoint, keeping the orientation',
+                                          throttle_duration_sec=2.0)
             else:
-                msg.angular.z = math.copysign(min(1.0, self.max_angular_speed), delta_theta)
+                msg.angular.z = direction * min(1.0, self.max_angular_speed)
 
         else:
             msg.linear.x = 0.0
             msg.angular.z = 0.0
+
+        # Stall detection only measures consecutive rotations in place
+        if msg.angular.z == 0.0 or msg.linear.x != 0.0 or msg.linear.y != 0.0:
+            self.rotation_start = None
 
         self.vel_pub.publish(msg)
         self.get_logger().info(f'\nCurrent pose: ({self.x:.2f}, {self.y:.2f}, {self.theta:.2f}), '

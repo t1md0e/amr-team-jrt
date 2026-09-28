@@ -87,9 +87,11 @@ The speed limits can be set with the parameters `max_linear_speed` (default 0.3 
 
 The repulsive force is calculated from the clearance between the rectangular robot footprint and the closest obstacle (configuration space), so that the corners of the robot also keep a distance to obstacles. The footprint is set with the parameters `robot_length` (default 0.76 m), `robot_width` (default 0.47 m) and `laser_to_front` (default 0.05 m, distance from the laser scanner to the front side, as the scanner is mounted in the middle of the front side); the position of the laser scanner in `base_link` is taken from the transforms. For safety:
 - if the clearance to an obstacle is below 0.1 m, the robot only moves away from it (sideways or backwards, the robot is omnidirectional),
-- the robot only rotates in place if no obstacle is inside the circle swept by its corners; otherwise it first moves away from the closest obstacle, or keeps its orientation at the final waypoint.
+- before rotating in place, the rotation is simulated step by step with the footprint; if the short way hits an obstacle, the robot rotates the other way round, and if both are blocked, it moves away from the closest obstacle for at most 3 s and then waits (e.g. until the explorer selects another goal) instead of alternating between rotating and moving away; at the final waypoint it keeps its orientation,
+- a rotation in place that does not change the orientation for 2 s (i.e. that is physically blocked) is treated in the same way,
+- laser points of the last 10 s within 2 m are remembered (odom frame), so that obstacles that have left the laser's field of view (next to or behind the robot) are still considered.
 
-Note that the laser scanner only sees obstacles in its field of view, obstacles behind the robot are not considered.
+Note that obstacles behind the robot are only known if the laser scanner has seen them before. In simulation, the robot model is longer (laser 0.45 m in front of `base_link`, rear side 0.35 m behind it), so use `robot_length:=0.85` there.
 
 The waypoint is given in map frame and transformed to the odom frame in every control step, so that the goal follows corrections of the localisation (`map` -> `odom`).
 

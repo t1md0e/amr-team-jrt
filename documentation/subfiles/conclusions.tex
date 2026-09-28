@@ -15,7 +15,7 @@
         \item The real size and shape of the robot matters. A robot that is modelled as a point collides with its corners.
         \item A simulation environment should be as similar as possible to the real test environment. Rebuilding our arena in the simulation helped us to find the causes of the problems with the narrow passage.
         \item Logs and visualisation (RViz) are essential to find the culprits of problems, especially on the real robot.
-        \item Simple potential fields have limits in narrow passages. A robot that aligns itself with the passage before entering it, or a local planner that considers the shape of the robot, would be the next improvement.
+        \item Adding a special case for every problem makes the code complex, and the special cases interfere with each other. A potential field in the configuration space, which considers the shape and orientation of the robot, solved most of these problems with less code.
     \end{itemize}
 
 \end{document}

@@ -65,19 +65,12 @@
     \label{sec:project_description:proposed_approach}
     % which algorithsms we chose to solve the task; the biref idea of each algorithm
 
-    We implemented all parts as nodes of one ROS~2 (Humble) package in Python (Fig.~\ref{fig:overview}):
+    We implemented all parts as nodes of one ROS~2 (Humble) package in Python:
     \begin{itemize}
         \item \textbf{A* path planner:} A* searches the shortest path on the occupancy grid map. The obstacles are grown by the robot radius (configuration space), so that the path keeps a distance to walls. The path is sampled into waypoints, which are sent to the navigator one after the other.
-        \item \textbf{Potential field navigator:} The waypoint attracts the robot, and the closest obstacle measured by the laser scanner repels it. The sum of both forces gives the driving direction and speed.
+        \item \textbf{Potential field navigator:} The waypoint attracts the robot, and the obstacles measured by the laser scanner repel it. The potential field is defined over the position and the orientation of the robot, and its negative gradient gives the velocity of the omnidirectional robot.
         \item \textbf{Particle filter:} Many particles represent possible poses of the robot. They are moved with the odometry (motion model), weighted by comparing the laser scan with the map (measurement model) and resampled according to their weights.
         \item \textbf{Fringe-based explorer:} The explorer selects the closest reachable cell at the map fringe as the next goal. The map itself is created by \emph{slam\_gmapping}, an existing SLAM implementation based on a particle filter.
     \end{itemize}
-
-    \begin{figure}[ht]
-        \centering
-        \figureplaceholder{overview of the nodes and topics (explorer $\rightarrow$ /goal $\rightarrow$ path\_planner $\rightarrow$ /waypoint $\rightarrow$ potential\_field\_navigator $\rightarrow$ /cmd\_vel; particle\_filter or slam\_gmapping $\rightarrow$ map $\rightarrow$ odom)}
-        \caption{Overview of the implemented nodes and the topics between them.}
-        \label{fig:overview}
-    \end{figure}
 
 \end{document}

@@ -34,7 +34,7 @@
     We used AI assistants during the whole project: mainly Claude Code (Anthropic), and in addition ChatGPT (OpenAI) for help with coding and debugging in task 1.
     Claude Code was used for the following parts:
     \begin{itemize}
-        \item \textbf{Code:} Claude Code wrote the particle filter (task 2), the explorer (task 3) and the launch files, based on the methods of the course. It also made most of the later fixes to the path planner and the potential field navigator (task 1), which were written by our team.
+        \item \textbf{Code:} Claude Code wrote the particle filter (task 2), the explorer (task 3) and the launch files, based on the methods of the course. It also made most of the later fixes to the path planner and the potential field navigator (task 1), which were written by our team, and finally rewrote the navigator as a potential field in the configuration space.
         \item \textbf{Debugging:} We gave Claude Code the logs of the simulation and of the real robot, and it analysed them and suggested fixes, e.g. for the clock difference, the corner collisions and the narrow passage.
         \item \textbf{Simulation and tests:} Claude Code set up the Docker simulation, wrote test scripts that measured e.g. the explored area and the localisation error, and ran the tests in the simulation. It also helped out with solving cryptic errors.
         \item \textbf{Git:} It created branches, commits and pull request descriptions. All commits made with its help are marked with ``Co-Authored-By: Claude''.

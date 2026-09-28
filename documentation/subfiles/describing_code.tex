@@ -24,21 +24,26 @@
 
     \textbf{Potential field navigator.}
     The node \emph{potential\_field\_navigator} moves the robot to the current waypoint.
-    The attractive force $\vec{F}_{att}$ is a unit vector towards the waypoint.
-    The repulsive force is calculated from the clearance $d$ between the robot and the closest obstacle:
+    The potential field is defined in the configuration space $\vec{q} = (x, y, \theta)$ of the robot, i.e. over its position and orientation:
     \begin{equation}
-        \vec{F}_{rep} = -\eta \left( \frac{1}{d} - \frac{1}{\rho_0} \right) \frac{1}{d^2} \, \vec{e}_{obs} \quad \text{for } d < \rho_0,
+        U(\vec{q}) = U_{att}(\vec{q}) + U_{rep}(\vec{q}), \qquad \vec{F}(\vec{q}) = -\nabla U(\vec{q}).
+        \label{eq:potential}
+    \end{equation}
+    Every obstacle point $i$ of the laser scan has a repulsive potential, which depends on the clearance $d_i(\vec{q})$ between the point and the rectangular footprint of the robot (\qtyproduct{0.76 x 0.47}{m}) at the pose $\vec{q}$:
+    \begin{equation}
+        U_{rep}(\vec{q}) = \sum_i \frac{1}{2} \eta \left( \frac{1}{d_i(\vec{q})} - \frac{1}{\rho_0} \right)^2 \quad \text{for } d_i < \rho_0,
         \label{eq:repulsion}
     \end{equation}
-    with $\eta = 0.1$, $\rho_0 = \SI{0.6}{m}$ and the unit vector $\vec{e}_{obs}$ towards the obstacle.
-    The robot turns towards the sum of both forces and slows down when it turns, when it is close to obstacles and when it is close to the waypoint.
-    If the desired direction is to the side or behind the robot, it rotates to face it first.
+    with $\eta = 0.0005$ and $\rho_0 = \SI{0.4}{m}$.
+    The laser points are thinned out to one point per \SI{5}{cm} cell, so that a wall counts by its length and not by the number of laser points.
+    The attractive potential $U_{att}$ pulls the robot to the waypoint (quadratic within \SI{0.3}{m}, so that the robot slows down there, and conic beyond) and turns it towards the waypoint, so that the laser scanner looks in the driving direction. At the waypoint, it turns the robot to the orientation of the waypoint.
+    The gradient is calculated numerically. As the robot is omnidirectional, $\vec{F}$ is directly used as velocity in $x$, $y$ and $\theta$, limited to the maximum speeds.
 
     Compared to the basic potential field planner from the assignments, we added:
     \begin{itemize}
-        \item \textbf{Rectangular footprint:} $d$ is the clearance between the rectangular footprint of the robot (\qtyproduct{0.76 x 0.47}{m}) and the obstacle, so that the robot also keeps distance to corners. Only the closest obstacle is used, because summing over all laser points counts a wall many times and creates local minima.
-        \item \textbf{Safety:} Below a clearance of \SI{0.1}{m}, the robot only moves away from the obstacle. Before rotating in place, the rotation is simulated with the footprint, and the robot rotates the other way round if the short way is blocked. If both ways are blocked, it moves back along its driven path.
-        \item \textbf{Narrow passages:} If obstacles are close but the footprint can move in a straight line to the waypoint, the robot moves there without rotating, as it is omnidirectional.
+        \item \textbf{Rectangular footprint and orientation:} As the clearance is measured from the footprint at the pose $\vec{q}$, a rotation that brings a corner closer to a wall increases $U$ and is avoided. In a narrow passage, the repulsions of both sides cancel each other in the middle.
+        \item \textbf{Line search:} A step along $\vec{F}$ is only taken if $U$ decreases, otherwise a shorter step is tried. This prevents the robot from oscillating between the walls of a narrow passage.
+        \item \textbf{Local minima:} If the robot gets no closer to the waypoint for \SI{5}{s}, it escapes with a random walk, as proposed in the lecture.
         \item \textbf{Obstacle memory:} The laser scanner only looks to the front. Therefore, laser points are remembered for some time, so that obstacles next to and behind the robot are still known. This is also known as spatial memory.
     \end{itemize}
 
@@ -70,18 +75,18 @@
     The map is created by \emph{slam\_gmapping}, a ROS~2 port of the gmapping SLAM package, which also publishes the pose of the robot in the map.
     Our node \emph{explorer} selects the goals:
     \begin{enumerate}
-        \item It finds the fringe cells, i.e. free cells next to unknown cells, and groups them into connected regions. Small regions are ignored.
-        \item Occupied cells are grown by \SI{0.5}{m}, so that the robot fits insid the goal and can rotate inside there.
-        \item A wavefront search (breadth-first search over the free cells) finds the closest reachable fringe cell that is at least \SI{1}{m} away. This cell is sent to the path planner as the next goal.
+        \item It finds the fringe cells, i.e. free cells next to unknown cells, and groups them into connected regions. Regions with less than 4 cells are ignored.
+        \item Occupied cells are grown by \SI{0.5}{m}, so that the robot fits inside the goal and can rotate there. If a fringe cell is closer to obstacles, e.g. next to a wall, the goal is a \emph{view pose}: the closest free pose within \SI{1}{m}, from which the robot looks at the fringe cell.
+        \item A wavefront search (breadth-first search over the free cells) finds the closest reachable goal that is at least \SI{1}{m} away. This goal is sent to the path planner.
         \item The goal orientation points towards the unknown cells around the goal, so that the laser scanner scans the unexplored region once the robot arrives.
     \end{enumerate}
-    A new goal is selected when the goal is reached, when the region around it has already been explored on the way, or when the robot makes no progress. Goals without progress are put on a blacklist.
+    A new goal is selected when the goal is reached, when the region around it has already been explored on the way, or when the robot makes no progress. Goals without progress and fringe cells that are still unknown after the robot has reached their view pose are put on a blacklist.
 
     We added the following functionalities:
     \begin{itemize}
-        \item \textbf{Initial step:} At the start, the cell of the robot itself is still unknown, because the laser scanner is at the front. Therefore, the robot first moves a small step forward.
+        \item \textbf{Initial step:} At the start, the cell of the robot itself is still unknown, because the laser scanner is at the front. Therefore, the robot first moves a small step forward. A small enclosed unknown region at the start position, i.e. the floor below the robot that the laser scanner never sees, is ignored.
         \item \textbf{Driving direction:} If the goal was already explored on the way, the next goal is searched close to the old goal. Otherwise, the robot would turn around, e.g. inside a narrow passage, as soon as it sees into the room behind it.
-        \item \textbf{Stopping and saving:} The exploration may be stopped after a maximum time or if no new area is explored for a while time. The map gets saved regularly, so that it can be used for the localisation algorithm in task 2.
+        \item \textbf{Stopping and saving:} The exploration may be stopped after a maximum time or if no new area is explored for some time. The map gets saved regularly, so that it can be used for the localisation algorithm in task 2.
     \end{itemize}
 
 \end{document}

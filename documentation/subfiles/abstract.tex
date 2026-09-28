@@ -5,7 +5,7 @@
     \begin{abstract}
         In this project, we brought three navigation functionalities from the course Autonomous Mobile Robots to the Robile platform: path and motion planning with A* and a potential field path planner, Monte Carlo localisation with our own particle filter, as well as fringe-based exploration together with SLAM-gmapping.
         All functionalities work reliably in the simulation: the robot reaches its goals, localises itself globally in a known map and explores an unknown environment completely.
-        On the real robot, we had to solve several additional problems, such as different clock times of the laptop and the robot, invalid laser measurements and collisions with the corners of the robot.
-        A narrow passage in our test arena is still difficult for the robot, if it enters the passage at an angle.
+        On the real robot, we tested the exploration and had to solve several additional problems, such as different clock times of the laptop and the robot, invalid laser measurements, collisions with the corners of the robot and a narrow passage in our test arena.
+        To handle these problems without many special cases, we replaced our navigator by a potential field in the configuration space of the robot, with which the robot also passed the narrow passage and mapped the whole arena.
     \end{abstract}
 \end{document}

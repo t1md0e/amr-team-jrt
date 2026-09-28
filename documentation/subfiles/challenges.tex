@@ -23,6 +23,8 @@
     The reason was that the repulsive forces of all laser points were summed up, which made the repulsion of a wall 10 to 20 times stronger than the attraction.
     We solved this by using only the closest obstacle, by slowing down close to the waypoint and by rotating in place if the waypoint is to the side or behind the robot.
     Planning the path in the configuration space kept the path away from walls.
+    Later, we replaced this navigator by a potential field in the configuration space (Sec.~\ref{sec:challenges:real_robot}).
+    We also found that the simulated robot hardly moves at commands below \SI{0.25}{m/s} and \SI{0.5}{rad/s}, so that small corrections of the navigator had no effect. This speed is now added to every command in the simulation.
 
     \textbf{Localisation.}
     In symmetric environments, the particle filter sometimes converged to a wrong place, because a single scan fits several places of the map.
@@ -71,10 +73,21 @@
     In our arena, the robot did not pass the narrow passage (about \SI{0.8}{m} wide, estimated from the laser data).
     It turned left and right in front of it, moved back and tried again, until the explorer gave up the goal.
     The reason was the repulsion of both sides of the passage, which was much stronger than the attraction of the waypoint and turned the robot away.
-    We rebuilt the arena in the simulation and made several changes: the robot now moves straight through the passage if the way is free, the explorer does not turn around inside the passage, and the path stays in the middle of the passage.
-    During these tests, we also found that the obstacle memory of the navigator almost never worked, because the laser scan was a few milliseconds newer than the odometry. After fixing this, the robot no longer touched the walls of the passage when rotating.
-    However, the robot still gets stuck if it enters the passage at an angle, as the passage is then only a few centimetres wider than the robot.
-    We estimated that passages of at least \SI{0.9}{m} are working. These changes have not been tested on the real robot yet.
+    We rebuilt the arena in the simulation and added a special mode, in which the robot moves straight through the passage without rotating, and the path now stays in the middle of the passage.
+    We also found that the obstacle memory of the navigator almost never worked, because the laser scan was a few milliseconds newer than the odometry.
+
+    \textbf{Simplified navigator.}
+    For every problem, we had added a new special case to the navigator: a check of the rotation with the footprint, keeping the direction of a rotation, a detection of blocked rotations, moving back along the driven path, moving away from obstacles and the mode for narrow passages.
+    The code became complex, and the special cases interfered with each other: e.g. the passage mode was active almost all the time and slowed the exploration down so much that the map was not complete after \SI{300}{s}.
+    We therefore replaced all special cases by one potential field in the configuration space $(x, y, \theta)$ (Sec.~\ref{sec:describing_code:task1}), which considers the shape and the orientation of the robot.
+    The navigator became about 180 lines shorter. In the simulation, the exploration was complete after about \SI{90}{s} again, and the robot passed the narrow passage of the rebuilt arena.
+
+    \textbf{Exploration in the lab.}
+    With the new navigator, the robot still stayed in front of the passage, but this time because of the explorer.
+    The only goal it selected was an unknown spot at the start position: the floor below the robot, which the laser scanner at the front never sees. The robot drove around it again and again.
+    The fringe in and behind the passage was never selected, because it was closer than \SI{0.5}{m} to obstacles or too small.
+    We changed the explorer: such fringe cells are now explored from a view pose nearby, small regions from 4 cells on are used, and the unknown floor at the start position is ignored.
+    In the simulation, the robot then drove through the passage and explored the whole arena in about \SI{60}{s}, and on the real robot, it passed the narrow passage and mapped the whole arena as well.
 
     \subsection{Time Management}
     \label{sec:challenges:time_management}

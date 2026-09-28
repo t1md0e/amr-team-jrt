@@ -1,4 +1,4 @@
-\documentclass[lettersize,journal]{IEEEtran}
+\documentclass[a4paper,journal]{IEEEtran}
 \usepackage[table]{xcolor}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithm}
@@ -46,17 +46,16 @@
 
 \begin{document}
 
-\title{Your Project Title}
+\title{AMR Final Project}
 
-\author{Your Name
+\author{Julia Töws, Rene Hadder, Tim Dörpinghaus
         % <-this % stops a space
 \thanks{$^*$Submitted to the Department of Computer Science at Hochschule Bonn-Rhein-Sieg in partial fulfilment of the requirements for the degree of Master of Science in Autonomous Systems}
-\thanks{$^{\dagger}$Supervised by Supervisor 1 (Affiliation) and Supervisor 2 (Affiliation)}
-\thanks{$^{\ddagger}$Submitted in Month 20XX}} %
+\thanks{$^{\ddagger}$Submitted in September 2026}} %
 % \thanks{Manuscript received October Day, 2022; revised Month Day, 2023.}}
 
 \markboth{R\&D Project Report, Master of Autonomous Systems, Hochschule Bonn-Rhein-Sieg}%
-{Your Name: Your Project Title}
+{J. Töws, R. Hadder, T. Dörpinghaus: AMR Final Project}
 
 \maketitle
 
@@ -67,17 +66,16 @@ Write up to three keywords about your work.
 \end{IEEEkeywords}
 
 % Add your content by filling out these
-\subfile{subfiles/introduction}
-\subfile{subfiles/related_work}
-\subfile{subfiles/background}
-\subfile{subfiles/methodology}
-\subfile{subfiles/evaluation}
+\subfile{subfiles/project_description}
+\subfile{subfiles/describing_code}
+\subfile{subfiles/executing_code}
+\subfile{subfiles/challenges}
 \subfile{subfiles/conclusions}
 
-\bibliographystyle{IEEEtran}
-\bibliography{references}
+% Wieder einkommentieren, sobald im Text mit \cite{...} zitiert wird (leeres Literaturverzeichnis bricht den Build ab)
+% \bibliographystyle{IEEEtran}
+% \bibliography{references}
 
-\subfile{subfiles/acknowledgement}
 \subfile{subfiles/statement_of_originality}
 \subfile{subfiles/appendix}
 

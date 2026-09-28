@@ -18,7 +18,7 @@
 
     \textbf{Environment.}
     We used the Robile simulation in Gazebo Classic with ROS~2 Humble.
-    It ran in a Docker container on a Mac, which emulates the amd64 architecture, because Gazebo Classic is not available for ARM processors.
+    It ran in Docker containers: partly on an Ubuntu computer in a container with Ubuntu, and mostly on a Mac, where the container emulates the amd64 architecture, because Gazebo Classic is not available for ARM processors.
     As the Gazebo interface did not open in the container, we only ran the simulation server and used RViz to see the robot, the laser scan, the map and the particles.
     Most tests were done in the world \emph{closed\_walls} (about \qtyproduct{7 x 7}{m}) and some in a house world as a harder test with open doors.
 
@@ -107,7 +107,7 @@
 
     \textbf{Environment.}
     In the lab, we used a Robile with four wheels and a laser scanner at its front.
-    The ROS~2 nodes ran on a laptop with Ubuntu, which was connected to the robot via WLAN.
+    The ROS~2 nodes ran in a Docker container with Ubuntu on a laptop with Ubuntu, which was connected to the robot via WLAN.
     We tested in the corridor of the university with boxes as obstacles (Fig.~\ref{fig:real_environment}) and in an arena that we built ourselves: two rectangular areas connected by a narrow passage.
     Compared to the simulation, we reduced the speed of the robot to at most \SI{0.3}{m/s} and \SI{0.8}{rad/s}.
 

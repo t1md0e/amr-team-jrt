@@ -26,7 +26,7 @@
     For this task, the robot was localised with our particle filter in a map created before.
     We sent three goals one after the other (Fig.~\ref{fig:sim_task1}).
     The robot reached all goals without collisions in about \SIrange{30}{50}{s} each, with a final position error of about \SIrange{0.02}{0.16}{m}.
-    Video: \videourl{task1_navigation.mp4}
+    Video: \href{https://youtu.be/eph5LCBV-MY}{aufgabe1 navigation}
 
     \begin{figure*}[t]
         \centering
@@ -53,7 +53,7 @@
     While the robot was moving, the particles converged to the correct pose after about \SIrange{15}{90}{s}, depending on the start position.
     After that, the error of the estimated position was about \SIrange{0.01}{0.15}{m}.
     In some runs, the filter first converged to a wrong but similar-looking place and corrected itself after \SIrange{30}{80}{s} thanks to the random particles.
-    Video: \videourl{task2_localisation.mp4}
+    Video: \href{https://youtu.be/jE-axqhAQd0}{aufgabe2 lokalisierung}
 
     \begin{figure*}[t]
         \centering
@@ -78,7 +78,7 @@
     \textbf{Task 3: Environment exploration.}
     The robot started in an unknown environment and explored it on its own (Fig.~\ref{fig:sim_task3}).
     In the final runs in \emph{closed\_walls}, the complete map (about \SI{52}{m^2}) was created in about \SIrange{90}{120}{s}, and the exploration stopped by itself when no reachable fringe was left.
-    Video: \videourl{task3_exploration.mp4}
+    Video: \href{https://youtu.be/DoE1StjPe04}{aufgabe3 exploration}
 
     \begin{figure*}[t]
         \centering
@@ -108,20 +108,13 @@
     \textbf{Environment.}
     In the lab, we used a Robile with four wheels and a laser scanner at its front.
     The ROS~2 nodes ran in a Docker container with Ubuntu on a laptop with Ubuntu, which was connected to the robot via WLAN.
-    We tested in the corridor of the university with boxes as obstacles (Fig.~\ref{fig:real_environment}) and in an arena that we built ourselves: two rectangular areas connected by a narrow passage.
+    We tested in the corridor of the university with boxes as obstacles and in an arena that we built ourselves in the lab: two rectangular areas connected by a narrow passage (Fig.~\ref{fig:real_arena}).
     Compared to the simulation, we reduced the speed of the robot to at most \SI{0.3}{m/s} and \SI{0.8}{rad/s}.
 
     \begin{figure}[ht]
         \centering
-        \includegraphics[width=0.9\linewidth]{figures/real_corridor.jpg}
-        \caption{The Robile in the corridor, with boxes as obstacles.}
-        \label{fig:real_environment}
-    \end{figure}
-
-    \begin{figure}[ht]
-        \centering
-        \figureplaceholder{photo of the arena with the narrow passage}
-        \caption{Our arena in the lab: two areas connected by a narrow passage.}
+        \includegraphics[width=0.9\linewidth]{figures/arena.jpg}
+        \caption{The Robile in our arena in the lab, bounded by boxes and furniture.}
         \label{fig:real_arena}
     \end{figure}
 
@@ -148,11 +141,11 @@
     In the arena, the robot explored the first area, but it did not pass the narrow passage to the second area (see Sec.~\ref{sec:challenges:real_robot}).
     \begin{figure}[ht]
         \centering
-        \figureplaceholder{map of the lab / arena created by the exploration}
-        \caption{Map created by the exploration on the real robot.}
+        \includegraphics[width=0.6\linewidth, trim=150 160 120 65, clip]{figures/lab_map-5.png}
+        \caption{Map of the arena created by the exploration on the real robot (white: free, black: occupied, grey: unknown).}
         \label{fig:real_task3}
     \end{figure}
 
-    % TODO: add links to videos of the real robot, e.g. \url{...}
+    Videos: \href{https://youtu.be/7wGQjqQ4EhQ}{Mapping in Lab; Real Robot}, \href{https://youtu.be/zNW6HkEr-Kk}{Mapping in Lab; Screenrecording}
 
 \end{document}

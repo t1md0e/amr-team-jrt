@@ -5,15 +5,83 @@
     \section{Describing the Code}
     \label{sec:describing_code}
 
-    Describe the code you have implemented and its functionality.
+    % Describe the code you have implemented and its functionality. keep it short and simple, but dont miss important steps.
+    % explain functionalitys you added extra to the basic algorithm briefly.
+
+    This section describes the implemented nodes and the functionalities we added to the basic algorithms.
+    The code and a more detailed description of all topics and parameters are available in the README of our repository\footnote{\url{https://github.com/t1md0e/amr-team-jrt}}.
 
     \subsection{Task 1: Path and Motion Planning}
     \label{sec:describing_code:task1}
 
+    \textbf{Path planner.}
+    The node \emph{path\_planner} receives a goal and the occupancy grid map.
+    A* searches the shortest path from the robot to the goal, using the direct and diagonal neighbours of a cell and the Euclidean distance as heuristic.
+    Occupied cells are grown by \SI{0.35}{m}, so that the path keeps a distance to obstacles.
+    If no path is found, e.g. in a narrow passage, this distance is reduced step by step, so that the path still stays in the middle of the passage.
+    The path is sampled into waypoints, and only one waypoint at a time is sent to the navigator.
+    Intermediate waypoints only have to be passed within \SI{0.3}{m}, while the goal has to be reached within \SI{0.1}{m}.
+
+    \textbf{Potential field navigator.}
+    The node \emph{potential\_field\_navigator} moves the robot to the current waypoint.
+    The attractive force $\vec{F}_{att}$ is a unit vector towards the waypoint.
+    The repulsive force is calculated from the clearance $d$ between the robot and the closest obstacle:
+    \begin{equation}
+        \vec{F}_{rep} = -\eta \left( \frac{1}{d} - \frac{1}{\rho_0} \right) \frac{1}{d^2} \, \vec{e}_{obs} \quad \text{for } d < \rho_0,
+        \label{eq:repulsion}
+    \end{equation}
+    with $\eta = 0.1$, $\rho_0 = \SI{0.6}{m}$ and the unit vector $\vec{e}_{obs}$ towards the obstacle.
+    The robot turns towards the sum of both forces and slows down when it turns, when it is close to obstacles and when it is close to the waypoint.
+    If the desired direction is to the side or behind the robot, it rotates in place first.
+
+    Compared to the basic potential field planner from the assignments, we added:
+    \begin{itemize}
+        \item \textbf{Rectangular footprint:} $d$ is the clearance between the rectangular footprint of the robot (\qtyproduct{0.76 x 0.47}{m}) and the obstacle, so that also the corners keep a distance. Only the closest obstacle is used, because summing over all laser points counts a wall many times and creates local minima.
+        \item \textbf{Safety:} Below a clearance of \SI{0.1}{m}, the robot only moves away from the obstacle. Before a rotation in place, the rotation is simulated with the footprint, and the robot rotates the other way round if the short way is blocked. If both ways are blocked, it moves back along its driven path.
+        \item \textbf{Narrow passages:} If obstacles are close but the footprint can move in a straight line to the waypoint, the robot moves there without rotating, as it is omnidirectional.
+        \item \textbf{Obstacle memory:} The laser scanner only looks to the front. Therefore, laser points are remembered for some time, so that obstacles next to and behind the robot are still known.
+    \end{itemize}
+
     \subsection{Task 2: Localization}
     \label{sec:describing_code:task2}
 
+    The node \emph{particle\_filter} implements Monte Carlo localisation with 2000 particles.
+    When the map is received, the particles are spread uniformly over all free cells (global localisation).
+    Alternatively, a start pose can be set in RViz, and the particles are sampled around it.
+    The filter is only updated after the robot has moved or rotated a little (\SI{0.05}{m} or \SI{0.05}{rad}). Every update has three steps:
+    \begin{enumerate}
+        \item \textbf{Motion update:} Every particle is moved with the odometry motion model (rotation, translation, rotation), with Gaussian noise on every part.
+        \item \textbf{Measurement update:} For 30 laser beams, the expected range is calculated for every particle by casting a ray through the map. The weight of a particle is the likelihood of the measured ranges (Gaussian with $\sigma = \SI{0.4}{m}$ around the expected range, plus a small probability for random measurements).
+        \item \textbf{Resampling:} Particles are drawn proportionally to their weights.
+    \end{enumerate}
+    The estimated pose is the weighted mean of the particles.
+    The node publishes it and the transform from the map to the odometry frame, which the path planner and the navigator use.
+
+    We added the following extensions:
+    \begin{itemize}
+        \item \textbf{Recovery (augmented MCL):} If the short-term average of the particle weights drops below the long-term average, random particles are added. This helps if the robot is lost or kidnapped.
+        \item \textbf{Symmetric environments:} The particles are not resampled before the robot has moved, as a single scan often fits several places of a symmetric map.
+        \item \textbf{Partial maps:} Beams that end in an unknown cell of the map get a uniform likelihood, so that the filter also works with maps that are not completely explored.
+    \end{itemize}
+
     \subsection{Task 3: Environment Exploration}
     \label{sec:describing_code:task3}
+
+    The map is created by \emph{slam\_gmapping}, a ROS~2 port of the gmapping SLAM package, which also publishes the pose of the robot in the map.
+    Our node \emph{explorer} selects the goals:
+    \begin{enumerate}
+        \item It finds the fringe cells, i.e. free cells next to unknown cells, and groups them into connected regions. Small regions are ignored.
+        \item Occupied cells are grown by \SI{0.5}{m}, so that the robot fits at the goal and can rotate there.
+        \item A wavefront search (breadth-first search over the free cells) finds the closest reachable fringe cell that is at least \SI{1}{m} away. This cell is sent to the path planner as the next goal.
+        \item The goal orientation points towards the unknown cells around the goal, so that the laser scanner looks into the unexplored region once the robot arrives.
+    \end{enumerate}
+    A new goal is selected when the goal is reached, when the region around it has already been explored on the way, or when the robot makes no progress. Goals without progress are put on a blacklist.
+
+    We added the following functionalities:
+    \begin{itemize}
+        \item \textbf{Initial step:} At the start, the cell of the robot itself is still unknown, because the laser scanner is at the front. Therefore, the robot first moves a small step forward.
+        \item \textbf{Driving direction:} If the goal was already explored on the way, the next goal is searched close to the old goal. Otherwise, the robot would turn around, e.g. inside a narrow passage, as soon as it sees into the room behind it.
+        \item \textbf{Stopping and saving:} The exploration can be stopped after a maximum time or if no new area is explored for some time. The map is saved regularly, so that it can be used for the localisation of task 2.
+    \end{itemize}
 
 \end{document}

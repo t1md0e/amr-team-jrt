@@ -34,7 +34,7 @@ OBSTACLE_MEMORY_TIME = 60.0   # s, laser points are remembered this long (obstac
 OBSTACLE_MEMORY_RANGE = 2.0   # m, within this distance, are outside of the laser's field of view)
 OBSTACLE_MEMORY_CELL = 0.05   # m, remembered points are thinned out to one per grid cell
 STALL_TIME = 2.0         # s, a rotation in place is measured over this time ...
-STALL_RATIO = 0.3        # ... and counts as blocked if the robot turns less than this ratio of the commanded rotation
+STALL_RATIO = 0.1        # ... and counts as blocked if the robot turns less than this ratio of the commanded rotation
                          # (it can wiggle or creep along an obstacle, so the net rotation in the commanded direction
                          # is compared with the commanded one)
 STALL_BLOCK_TIME = 5.0   # s, a blocked rotation direction is not used for this time, the other one is tried first

@@ -27,17 +27,30 @@ ESCAPE_TIMEOUT = 3.0     # s, if rotating is still not possible after moving awa
 TRAIL_SPACING = 0.05     # m, the driven path is recorded with this spacing ...
 TRAIL_LENGTH = 5.0       # m, ... up to this length
 BACKUP_STEP = 0.2        # m, if rotating is blocked in both directions, the robot moves back along the driven path
-MAX_BACKUP = 1.0         # m, in steps of BACKUP_STEP, up to MAX_BACKUP, and tries to rotate again after every step
+MAX_BACKUP = 3.0         # m, in steps of BACKUP_STEP, up to MAX_BACKUP, and tries to rotate again after every step
+                         # (enough to move back out of a narrow passage)
 BACKUP_SPEED = 0.1       # m/s
 BACKUP_TOLERANCE = 0.03  # m
-OBSTACLE_MEMORY_TIME = 60.0   # s, laser points are remembered this long (obstacles next to / behind the robot
-OBSTACLE_MEMORY_RANGE = 2.0   # m, within this distance, are outside of the laser's field of view)
+OBSTACLE_MEMORY_TIME = 300.0  # s, laser points are remembered this long (obstacles next to / behind the robot
+OBSTACLE_MEMORY_RANGE = 2.0   # m, within this distance, are outside of the laser's field of view, e.g. the walls of a
+                              # passage the robot slowly drives through), unless the laser scanner sees through them
+TF_TOLERANCE = 0.05           # s, the latest transform is used for a laser scan if it is at most this much older
+MEMORY_CLEAR_MARGIN = 0.1     # m, a remembered point is seen through if all measurements within MEMORY_CLEAR_ANGLE
+MEMORY_CLEAR_ANGLE = 0.05     # rad of its angle are this much farther (a wall seen at a grazing angle is hit farther away
+                              # by the beam at the angle of a remembered wall point, but closer by a neighbouring beam)
 OBSTACLE_MEMORY_CELL = 0.05   # m, remembered points are thinned out to one per grid cell
 STALL_TIME = 2.0         # s, a rotation in place is measured over this time ...
 STALL_RATIO = 0.1        # ... and counts as blocked if the robot turns less than this ratio of the commanded rotation
                          # (it can wiggle or creep along an obstacle, so the net rotation in the commanded direction
                          # is compared with the commanded one)
 STALL_BLOCK_TIME = 5.0   # s, a blocked rotation direction is not used for this time, the other one is tried first
+PASSAGE_MARGIN = 0.05    # m, if obstacles are close (e.g. in a narrow passage), the robot moves straight to the waypoint
+PASSAGE_STEP = 0.05      # without rotating as long as the footprint keeps this clearance on the way (checked in steps
+PASSAGE_ANGLE = math.pi / 3   # of PASSAGE_STEP) and the waypoint is within PASSAGE_ANGLE of the heading (in the
+PASSAGE_SPEED = 0.15     # m/s  field of view of the laser scanner); if the clearance is already smaller, the robot
+MIN_PASSAGE_CLEARANCE = 0.02  # must not get closer than now (e.g. to move towards the middle of the passage), and not
+PASSAGE_TOLERANCE = 0.005     # below MIN_PASSAGE_CLEARANCE (PASSAGE_TOLERANCE for moving parallel to a wall)
+GOAL_SLOWDOWN_DIST = 0.3 # m, distance to the waypoint at which slowing down starts, otherwise the robot circles around it
 
 THRESHOLD_ROTATION = 0.1
 THRESHOLD_POSE = 0.1
@@ -182,8 +195,7 @@ class PotentialFieldNavigator(Node):
         valid = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
         coords_polar = np.column_stack((ranges[valid], angles[valid]))
         coords_clean = np_polar2cart(coords_polar)
-        coords_transformed = self.update_obstacle_memory(apply_transform(coords_clean, self.laser_base_transform),
-                                                         msg.header.stamp)
+        coords_transformed = self.update_obstacle_memory(apply_transform(coords_clean, self.laser_base_transform), msg)
 
         # Points inside the footprint are reflections from the robot itself
         clearances, closest_points = self.get_footprint_clearance(coords_transformed)
@@ -206,16 +218,18 @@ class PotentialFieldNavigator(Node):
         self.repulsion = self.get_repulsion(self.min_clearance, *self.obstacle_direction)
 
 
-    def update_obstacle_memory(self, points, stamp):
-        """ Add the current laser points (base_link frame) to the obstacle memory and return all remembered points
-        in base_link frame, so that obstacles that have left the laser's field of view are still considered """
+    def update_obstacle_memory(self, points, msg):
+        """ Add the current laser points (base_link frame) of the scan msg to the obstacle memory and return all
+        remembered points in base_link frame, so that obstacles that have left the laser's field of view are still
+        considered """
         now = self.get_clock().now().nanoseconds * 1e-9
 
         # base_link -> odom with the pose at the time of the scan (with the current pose, the points would be
         # smeared while the robot rotates and remain as ghost obstacles)
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "base_link", rclpy.time.Time.from_msg(stamp))
+            transform = self.lookup_transform_at("odom", "base_link", rclpy.time.Time.from_msg(msg.header.stamp))
             points_odom = apply_transform(points, transform)
+            self.forget_seen_through(transform, msg)
         except tf2_ros.TransformException:
             points_odom = np.zeros((0, 2))
         all_points = np.vstack((points_odom, self.memory_points))
@@ -235,6 +249,45 @@ class PotentialFieldNavigator(Node):
         delta_x, delta_y = old[:, 0] - self.x, old[:, 1] - self.y
         remembered = np.column_stack((cos * delta_x + sin * delta_y, -sin * delta_x + cos * delta_y))
         return np.vstack((points, remembered))
+
+    def lookup_transform_at(self, target_frame, source_frame, time):
+        """ Transform at the given time; the odometry can be published slightly later than the laser scan (e.g. 2 ms
+        in simulation), then the latest transform is used if it is at most TF_TOLERANCE older """
+        try:
+            return self.tf_buffer.lookup_transform(target_frame, source_frame, time)
+        except tf2_ros.ExtrapolationException:
+            latest = self.tf_buffer.lookup_transform(target_frame, source_frame, rclpy.time.Time())
+            if (time - rclpy.time.Time.from_msg(latest.header.stamp)).nanoseconds * 1e-9 > TF_TOLERANCE:
+                raise
+            return latest
+
+    def forget_seen_through(self, transform, msg):
+        """ Forget remembered points that the laser scanner sees through, i.e. the measurement at their angle is
+        farther away (e.g. a person who has walked on), otherwise they would remain as ghost obstacles; transform is
+        base_link -> odom at the time of the scan """
+        if len(self.memory_points) == 0:
+            return
+        # odom -> base_link -> laser frame
+        points = apply_inverse_transform(apply_inverse_transform(self.memory_points, transform), self.laser_base_transform)
+        distances = np.hypot(points[:, 0], points[:, 1])
+        index = np.round(np.mod(np.arctan2(points[:, 1], points[:, 0]) - msg.angle_min, 2 * math.pi)
+                         / msg.angle_increment).astype(int)
+
+        # No echo within the range of the scanner (inf) means free space, invalid measurements (e.g. 0 on the real
+        # laser scanner) never see through a point
+        ranges = np.array(msg.ranges, dtype=float)
+        ranges[np.isposinf(ranges)] = msg.range_max
+        ranges[~(np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max))] = -np.inf
+        # Smallest measurement within MEMORY_CLEAR_ANGLE
+        beams = int(math.ceil(MEMORY_CLEAR_ANGLE / msg.angle_increment))
+        padded = np.pad(ranges, beams, constant_values=np.inf)
+        window_min = np.min([padded[i:i + len(ranges)] for i in range(2 * beams + 1)], axis=0)
+
+        in_view = index < len(ranges)
+        measured = np.full(len(points), -np.inf)
+        measured[in_view] = window_min[index[in_view]]
+        keep = ~(distances < measured - MEMORY_CLEAR_MARGIN)
+        self.memory_points, self.memory_times = self.memory_points[keep], self.memory_times[keep]
 
     def get_footprint_clearance(self, points):
         """ Get the distance of every point (base_link frame) to the rectangular footprint and the closest
@@ -281,6 +334,19 @@ class PotentialFieldNavigator(Node):
         rotated = np.stack((cos * x - sin * y, sin * x + cos * y), axis=-1).reshape(-1, 2)
         clearances, _ = self.get_footprint_clearance(rotated)
         return bool(np.all(clearances >= ROTATION_MARGIN))
+
+    def straight_motion_free(self, goal_x, goal_y):
+        """ Check whether the footprint can move in a straight line without rotating to the given point (base_link
+        frame) while keeping PASSAGE_MARGIN to all obstacles, or at least the current clearance if it is smaller """
+        distance = math.hypot(goal_x, goal_y)
+        if len(self.obstacle_points) == 0 or distance < ZERO_REPLACEMENT:
+            return True
+        required = min(PASSAGE_MARGIN, self.min_clearance - PASSAGE_TOLERANCE)
+        steps = np.minimum(np.arange(PASSAGE_STEP, distance + PASSAGE_STEP, PASSAGE_STEP), distance)
+        offsets = np.column_stack((steps * goal_x / distance, steps * goal_y / distance))
+        shifted = (self.obstacle_points[None, :, :] - offsets[:, None, :]).reshape(-1, 2)
+        clearances, _ = self.get_footprint_clearance(shifted)
+        return bool(np.all(clearances >= required))
 
     def rotation_stalled(self, direction, speed):
         """ Detect a rotation in place (direction +1 / -1, commanded angular speed) that does not turn the robot in
@@ -447,7 +513,28 @@ class PotentialFieldNavigator(Node):
         # Check whether current position is within radial threshold around goal position
         pos_reached = (delta_x ** 2 + delta_y ** 2) < THRESHOLD_POSE ** 2
 
-        if not pos_reached:
+        # Waypoint in base_link frame
+        cos, sin = math.cos(self.theta), math.sin(self.theta)
+        goal_base_x = cos * delta_x + sin * delta_y
+        goal_base_y = -sin * delta_x + cos * delta_y
+
+        if not pos_reached and MIN_PASSAGE_CLEARANCE <= self.min_clearance < RHO_0 and \
+                abs(math.atan2(goal_base_y, goal_base_x)) < PASSAGE_ANGLE and \
+                self.straight_motion_free(goal_base_x, goal_base_y):
+            # Obstacles are close (e.g. the sides of a narrow passage), but the footprint can move straight to the
+            # waypoint: move there without rotating (the robot is omnidirectional), otherwise the repulsion of the
+            # sides turns the robot away from the passage and it never passes through
+            distance = math.hypot(goal_base_x, goal_base_y)
+            speed = min(PASSAGE_SPEED, self.max_linear_speed) * min(1.0, distance / GOAL_SLOWDOWN_DIST)
+            msg.linear.x = speed * goal_base_x / distance
+            msg.linear.y = speed * goal_base_y / distance
+            self.escape_start = None
+            self.backup_target = None
+            self.backed_up = 0.0
+            self.get_logger().info(f'\nObstacle {self.min_clearance:.2f} m from the robot, but the way is free, '
+                                   f'moving straight to the waypoint', throttle_duration_sec=1.0)
+
+        elif not pos_reached:
             # Get total velocities (base_link frame)
             vel_x = self.attraction[0] + self.repulsion[0]
             vel_y = self.attraction[1] + self.repulsion[1]
@@ -474,7 +561,6 @@ class PotentialFieldNavigator(Node):
             obs_slow = 1.0 / (1.0 + OBS_SLOWDOWN_K * rep_mag)
 
             # 3) Slow down close to the waypoint, otherwise the robot circles around it
-            GOAL_SLOWDOWN_DIST = 0.3    # distance at which slowing down starts (tune)
             goal_slow = min(1.0, math.hypot(delta_x, delta_y) / GOAL_SLOWDOWN_DIST)
 
             # Final forward speed
@@ -550,8 +636,14 @@ def apply_transform(points, transform):
 
     return apply_rotation(points, transform) + translation
 
+## Helper function to apply the inverse of a given transform to an array of points
+def apply_inverse_transform(points, transform):
+    translation = np.array([transform.transform.translation.x, transform.transform.translation.y])
+
+    return apply_rotation(points - translation, transform, inverse=True)
+
 ## Helper function to apply the rotation from a given transform to an array of points
-def apply_rotation(points, transform):
+def apply_rotation(points, transform, inverse=False):
     quaternion = transform.transform.rotation
     x, y, z, w = quaternion.x, quaternion.y, quaternion.z, quaternion.w
     _, _, yaw = euler_from_quaternion([x, y, z, w])
@@ -561,7 +653,7 @@ def apply_rotation(points, transform):
         [np.sin(yaw), np.cos(yaw)]
     ])
 
-    return points @ rotation_matrix.T
+    return points @ rotation_matrix if inverse else points @ rotation_matrix.T
 
 def main(args=None):
     rclpy.init(args=args)

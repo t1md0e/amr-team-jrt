@@ -62,6 +62,8 @@ class Explorer(Node):
         self.goal_theta = None
         self.best_distance = None
         self.last_progress_time = None
+        # Last time the robot got PROGRESS_DISTANCE closer to a goal (not reset by selecting a new goal)
+        self.last_approach_time = None
 
         # Goals that could not be reached
         self.blacklist = []
@@ -164,8 +166,9 @@ class Explorer(Node):
 
         return inside_y[:, None] & inside_x[None, :]
 
-    def find_goal(self):
-        """ Find the closest reachable fringe cell using the wavefront algorithm (breadth-first search) """
+    def find_goal(self, origin=None):
+        """ Find the reachable fringe cell closest to the robot (or to the given origin, map frame) using the
+        wavefront algorithm (breadth-first search) """
         free = (self.occupancy >= 0) & (self.occupancy < FREE_THRESHOLD)
         fringe = self.get_fringe(free)
         candidates = fringe & self.get_configuration_space(free)
@@ -173,7 +176,7 @@ class Explorer(Node):
         candidates &= self.get_boundary_mask()
 
         height, width = self.occupancy.shape
-        start_x, start_y = self.map_to_cell_coords(self.x, self.y)
+        start_x, start_y = self.map_to_cell_coords(*(origin if origin is not None else (self.x, self.y)))
 
         # Wavefront starts at all free cells covered by the robot, as the cell of the robot itself
         # can still be unknown (the laser scanner is mounted at the front of the robot)
@@ -185,6 +188,9 @@ class Explorer(Node):
                 if free[y, x] and (x - start_x) ** 2 + (y - start_y) ** 2 <= radius ** 2:
                     visited[y, x] = True
                     queue.append((x, y))
+        if origin is not None and not queue:
+            # Origin is not in the free region (anymore), start at the robot
+            return self.find_goal()
 
         # Closest fringe cell that is not far enough away, only used if there is no other
         # (the laser scanner only looks to the front, so there is always fringe right next to the robot)
@@ -337,7 +343,10 @@ class Explorer(Node):
         if self.max_duration > 0 and now - self.start_time > self.max_duration:
             self.stop_exploration(f'Maximum exploration time of {self.max_duration:.0f} s reached')
             return True
-        if self.stagnation_timeout > 0 and now - self.last_area_gain_time > self.stagnation_timeout:
+        # Getting closer to the goal also counts as progress, e.g. while driving through explored area to a
+        # distant fringe (like the region behind a narrow passage)
+        last_progress = max(self.last_area_gain_time, self.last_approach_time or self.last_area_gain_time)
+        if self.stagnation_timeout > 0 and now - last_progress > self.stagnation_timeout:
             self.stop_exploration(f'No new area explored for {self.stagnation_timeout:.0f} s')
             return True
         return False
@@ -365,20 +374,28 @@ class Explorer(Node):
         if self.stopped or self.check_stopping_criteria(now):
             return
 
+        # Where the next goal is searched from: the robot, or the previous goal if it was seen on the way
+        origin = None
+
         if self.goal is not None:
             distance = euclid_distance(self.x, self.y, self.goal[0], self.goal[1])
 
             if distance < self.best_distance - PROGRESS_DISTANCE:
                 self.best_distance = distance
                 self.last_progress_time = now
+                self.last_approach_time = now
 
             delta_theta = math.atan2(math.sin(self.goal_theta - self.theta), math.cos(self.goal_theta - self.theta))
             if distance < THRESHOLD_GOAL and abs(delta_theta) < THRESHOLD_GOAL_ROTATION:
                 self.get_logger().info(f'\nExploration goal reached')
                 self.goal = None
             elif not self.is_fringe(self.goal[0], self.goal[1]):
-                # Region around goal has already been explored while driving there
+                # Region around goal has already been explored while driving there: continue with the fringe
+                # closest to that goal, i.e. in the direction the robot is driving; the fringe closest to the robot
+                # can be behind it (e.g. when the robot looks into a new room through a narrow passage, it would
+                # turn around inside the passage)
                 self.get_logger().info(f'\nExploration goal is no longer at the fringe')
+                origin = self.goal
                 self.goal = None
             elif now - self.last_progress_time > PROGRESS_TIMEOUT:
                 self.get_logger().warning(f'\nNo progress towards exploration goal, goal is blacklisted')
@@ -409,7 +426,7 @@ class Explorer(Node):
             return
         self.initial_step_done = True
 
-        self.goal = self.find_goal()
+        self.goal = self.find_goal(origin)
         if self.goal is None:
             # Keep checking, as the map can still change
             if not self.finished:

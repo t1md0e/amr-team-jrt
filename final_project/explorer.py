@@ -19,7 +19,7 @@ import tf2_ros
 FREE_THRESHOLD = 50           # same as in a_star.py: cells with an occupancy below 50 are free
 ROBOT_RADIUS = 0.5            # obstacles are grown by this radius (configuration space): the corners of the
                               # 0.76 m x 0.47 m robot are about 0.45 m away from base_link, so it can rotate at the goal
-MIN_FRONTIER_SIZE = 15        # minimal number of connected fringe cells (about robot width) to be considered as a goal
+MIN_FRONTIER_SIZE = 4         # minimal number of connected fringe cells (0.2 m) to be considered as a goal
 BLACKLIST_RADIUS = 0.5        # fringe cells around a failed goal are ignored
 THRESHOLD_GOAL = 0.3          # distance at which a goal counts as reached ...
 THRESHOLD_GOAL_ROTATION = 0.3 # ... together with this orientation error (robot has to look into the unknown region)
@@ -29,6 +29,10 @@ PROGRESS_TIMEOUT = 30.0       # ... within this time (s), otherwise the goal is 
 UNKNOWN_DIRECTION_RADIUS = 1.0  # unknown cells within this radius around a goal determine the goal orientation
 MAP_SAVE_INTERVAL = 30.0      # s, the map is also saved periodically, so that it is not lost if the node is stopped
 MIN_AREA_GAIN = 1.0           # explored area (m^2) that counts as progress for the stagnation criterion
+VIEW_DISTANCE = 1.0           # fringe cells too close to obstacles for the robot are explored from a reachable pose
+                              # within this distance (m), looking towards them
+MAX_START_ISLAND = 1.0        # m^2, an enclosed unknown region of at most this size at the start position is ignored
+                              # (the floor below the robot, which the laser scanner at the front never sees)
 INITIAL_STEP = 0.6            # distance the robot moves forward if its own cell is still unknown
 MAX_INITIAL_STEPS = 5         # safety limit, e.g. if SLAM does not update the map
 
@@ -57,8 +61,9 @@ class Explorer(Node):
         self.grid = None
         self.occupancy = None
 
-        # Currently explored goal (map frame) and progress towards it
+        # Currently explored goal (map frame), the fringe cell it looks at (map frame), and progress towards it
         self.goal = None
+        self.goal_fringe = None
         self.goal_theta = None
         self.best_distance = None
         self.last_progress_time = None
@@ -84,6 +89,9 @@ class Explorer(Node):
         self.last_area_gain_time = None
         self.stopped = False
 
+        # Start position of the robot (map frame)
+        self.start = None
+
         # The initial step is only needed at the start, before the robot's own cell has been seen once
         self.initial_step_done = False
         self.initial_steps = 0
@@ -100,15 +108,79 @@ class Explorer(Node):
         self.grid = msg
         self.occupancy = np.array(msg.data, dtype=np.int16).reshape(msg.info.height, msg.info.width)
 
-    def get_fringe(self, free):
+    def get_fringe(self, free, unknown):
         """ Get free cells that are next to unknown cells, i.e. the boundary between explored and unexplored region """
-        unknown = self.occupancy < 0
         unknown_neighbor = np.zeros_like(unknown)
         unknown_neighbor[1:, :] |= unknown[:-1, :]
         unknown_neighbor[:-1, :] |= unknown[1:, :]
         unknown_neighbor[:, 1:] |= unknown[:, :-1]
         unknown_neighbor[:, :-1] |= unknown[:, 1:]
         return free & unknown_neighbor
+
+    def get_start_island(self, unknown):
+        """ Get the unknown cells of a small enclosed unknown region at the start position of the robot (the floor
+        below the robot at the start, which the laser scanner at the front never sees); it would be a fringe that
+        can never be explored """
+        island = np.zeros_like(unknown)
+        if self.start is None:
+            return island
+        height, width = unknown.shape
+        start_x, start_y = self.map_to_cell_coords(*self.start)
+        radius = int(math.ceil(ROBOT_RADIUS / self.grid.info.resolution))
+        max_cells = MAX_START_ISLAND / self.grid.info.resolution ** 2
+        checked = np.zeros_like(unknown)
+
+        for y in range(max(0, start_y - radius), min(height, start_y + radius + 1)):
+            for x in range(max(0, start_x - radius), min(width, start_x + radius + 1)):
+                if not unknown[y, x] or checked[y, x] or (x - start_x) ** 2 + (y - start_y) ** 2 > radius ** 2:
+                    continue
+                # Connected unknown region (4-connected), only an island if it is small and enclosed by known cells
+                region = [(x, y)]
+                visited = {(x, y)}
+                queue = deque(region)
+                enclosed = True
+                while queue and enclosed:
+                    cx, cy = queue.popleft()
+                    for dx, dy in NEIGHBORS[:4]:
+                        nx, ny = cx + dx, cy + dy
+                        if not (0 <= nx < width and 0 <= ny < height):
+                            enclosed = False
+                        elif unknown[ny, nx] and (nx, ny) not in visited:
+                            visited.add((nx, ny))
+                            region.append((nx, ny))
+                            queue.append((nx, ny))
+                    if len(region) > max_cells:
+                        enclosed = False
+                for cx, cy in region:
+                    checked[cy, cx] = True
+                    island[cy, cx] = enclosed
+        return island
+
+    def get_view_poses(self, fringe, free, configuration_space):
+        """ Get reachable cells (configuration space) within VIEW_DISTANCE of a fringe cell, connected to it by free
+        cells, and for every such cell the fringe cell it looks at (-1 if none); a fringe cell in the configuration
+        space is its own view pose """
+        height, width = fringe.shape
+        target_x = np.full(fringe.shape, -1, dtype=int)
+        target_y = np.full(fringe.shape, -1, dtype=int)
+        max_distance = VIEW_DISTANCE / self.grid.info.resolution
+
+        # Breadth-first search from all fringe cells at once, so every cell gets the closest fringe cell
+        queue = deque()
+        for y, x in zip(*np.nonzero(fringe)):
+            target_x[y, x], target_y[y, x] = x, y
+            queue.append((x, y))
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in NEIGHBORS:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and free[ny, nx] and target_x[ny, nx] < 0 and \
+                        (nx - target_x[y, x]) ** 2 + (ny - target_y[y, x]) ** 2 <= max_distance ** 2:
+                    target_x[ny, nx], target_y[ny, nx] = target_x[y, x], target_y[y, x]
+                    queue.append((nx, ny))
+
+        target_x[~configuration_space] = -1
+        return target_x, target_y
 
     def get_configuration_space(self, free):
         """ Grow occupied cells by the robot radius, so that only cells the robot fits into remain free """
@@ -167,13 +239,16 @@ class Explorer(Node):
         return inside_y[:, None] & inside_x[None, :]
 
     def find_goal(self, origin=None):
-        """ Find the reachable fringe cell closest to the robot (or to the given origin, map frame) using the
-        wavefront algorithm (breadth-first search) """
+        """ Find the reachable view pose of a fringe cell closest to the robot (or to the given origin, map frame)
+        using the wavefront algorithm (breadth-first search); returns the goal and the fringe cell (map frame) """
         free = (self.occupancy >= 0) & (self.occupancy < FREE_THRESHOLD)
-        fringe = self.get_fringe(free)
-        candidates = fringe & self.get_configuration_space(free)
-        candidates &= self.get_fringe_sizes(fringe) >= MIN_FRONTIER_SIZE
-        candidates &= self.get_boundary_mask()
+        unknown = (self.occupancy < 0) & ~self.get_start_island(self.occupancy < 0)
+        fringe = self.get_fringe(free, unknown)
+        fringe &= self.get_fringe_sizes(fringe) >= MIN_FRONTIER_SIZE
+        fringe &= self.get_boundary_mask()
+        # Fringe cells close to obstacles are explored from a pose nearby that the robot fits into
+        target_x, target_y = self.get_view_poses(fringe, free, self.get_configuration_space(free))
+        candidates = target_x >= 0
 
         height, width = self.occupancy.shape
         start_x, start_y = self.map_to_cell_coords(*(origin if origin is not None else (self.x, self.y)))
@@ -199,14 +274,16 @@ class Explorer(Node):
         # Wavefront expands over free cells
         while queue:
             x, y = queue.popleft()
-            if candidates[y, x] and not self.is_blacklisted(x, y):
+            if candidates[y, x] and not self.is_blacklisted(x, y) and \
+                    not self.is_blacklisted(target_x[y, x], target_y[y, x]):
                 map_x, map_y = self.cell_to_map_coords(x, y)
+                fringe_cell = self.cell_to_map_coords(target_x[y, x], target_y[y, x])
                 distance = euclid_distance(self.x, self.y, map_x, map_y)
                 if distance >= MIN_GOAL_DISTANCE:
-                    return map_x, map_y
+                    return (map_x, map_y), fringe_cell
                 # Goals closer than the goal threshold would immediately count as reached
                 if close_goal is None and distance >= THRESHOLD_GOAL:
-                    close_goal = map_x, map_y
+                    close_goal = (map_x, map_y), fringe_cell
             for dx, dy in NEIGHBORS:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < width and 0 <= ny < height and free[ny, nx] and not visited[ny, nx]:
@@ -214,7 +291,7 @@ class Explorer(Node):
                     queue.append((nx, ny))
 
         # No reachable fringe far enough away, use a close one (None if there is no reachable fringe at all)
-        return close_goal
+        return close_goal if close_goal is not None else (None, None)
 
     def is_blacklisted(self, cell_x, cell_y):
         map_x, map_y = self.cell_to_map_coords(cell_x, cell_y)
@@ -267,7 +344,11 @@ class Explorer(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "map"
 
-        if goal_theta is None:
+        if goal_theta is None and self.goal_fringe is not None and \
+                euclid_distance(goal_x, goal_y, *self.goal_fringe) > self.grid.info.resolution:
+            # View pose: look towards the fringe cell
+            goal_theta = math.atan2(self.goal_fringe[1] - goal_y, self.goal_fringe[0] - goal_x)
+        elif goal_theta is None:
             goal_theta = self.get_unknown_direction(goal_x, goal_y)
         self.goal_theta = goal_theta
         q = quaternion_from_euler(0.0, 0.0, goal_theta)
@@ -365,6 +446,8 @@ class Explorer(Node):
         self.y = transform.transform.translation.y
         quaternion = transform.transform.rotation
         self.theta = euler_from_quaternion([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[2]
+        if self.start is None:
+            self.start = (self.x, self.y)
 
         if self.grid is None:
             return
@@ -388,8 +471,12 @@ class Explorer(Node):
             delta_theta = math.atan2(math.sin(self.goal_theta - self.theta), math.cos(self.goal_theta - self.theta))
             if distance < THRESHOLD_GOAL and abs(delta_theta) < THRESHOLD_GOAL_ROTATION:
                 self.get_logger().info(f'\nExploration goal reached')
+                if self.is_fringe(*self.goal_fringe):
+                    # The fringe is still unknown although the robot looks at it (e.g. hidden by an obstacle)
+                    self.get_logger().warning(f'\nFringe cannot be seen from the goal, it is blacklisted')
+                    self.blacklist.append(self.goal_fringe)
                 self.goal = None
-            elif not self.is_fringe(self.goal[0], self.goal[1]):
+            elif not self.is_fringe(*self.goal_fringe):
                 # Region around goal has already been explored while driving there: continue with the fringe
                 # closest to that goal, i.e. in the direction the robot is driving; the fringe closest to the robot
                 # can be behind it (e.g. when the robot looks into a new room through a narrow passage, it would
@@ -426,7 +513,7 @@ class Explorer(Node):
             return
         self.initial_step_done = True
 
-        self.goal = self.find_goal(origin)
+        self.goal, self.goal_fringe = self.find_goal(origin)
         if self.goal is None:
             # Keep checking, as the map can still change
             if not self.finished:

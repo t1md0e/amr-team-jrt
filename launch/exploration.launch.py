@@ -49,11 +49,12 @@ def generate_launch_description():
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}])
 
-    # Speed limits of the navigator (m/s, rad/s), slow defaults for the real robot, and the rectangular robot
-    # footprint (m): length, width and distance from the laser scanner to the front side
+    # Speed limits of the navigator (m/s, rad/s), slow defaults for the real robot, the rectangular robot
+    # footprint (m): length, width and distance from the laser scanner to the front side, and the speed the drive
+    # loses (deadband, e.g. 0.25 m/s and 0.5 rad/s in simulation, 0 for the real robot)
     navigator_params = ['max_linear_speed', 'min_linear_speed', 'max_angular_speed',
-                        'robot_length', 'robot_width', 'laser_to_front']
-    navigator_defaults = ['0.3', '0.1', '0.8', '0.76', '0.47', '0.05']
+                        'robot_length', 'robot_width', 'laser_to_front', 'linear_deadband', 'angular_deadband']
+    navigator_defaults = ['0.3', '0.1', '0.8', '0.76', '0.47', '0.05', '0.0', '0.0']
     declare_navigator_cmds = [
         DeclareLaunchArgument(name, default_value=default, description='Navigator parameter, see README')
         for name, default in zip(navigator_params, navigator_defaults)]

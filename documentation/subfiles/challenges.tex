@@ -13,7 +13,8 @@
     % challenges while executing the task in the simulation and how to fix the problem. briefly decribe the biggest issues and how you solved them.
 
     \textbf{Setup.}
-    The simulation ran in a Docker container with emulated amd64 architecture, which caused several problems: the Gazebo interface did not open, RViz sometimes froze, and older processes were still running, which interfered with new runs.
+    We ran the simulation in Docker containers: some simulations on an Ubuntu computer in a container with Ubuntu and ROS~2, and most of them on a Mac.
+    On the Mac, the container had to emulate the amd64 architecture, which caused several problems: the Gazebo interface did not open, RViz sometimes froze, and older processes were still running, which interfered with new runs.
     We therefore only used the Gazebo server with RViz and restarted the container before every test.
     In addition, the ROS~2 port of gmapping sometimes stopped after the first scan, so we restarted it automatically in this case.
 

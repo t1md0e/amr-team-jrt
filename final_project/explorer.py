@@ -235,7 +235,7 @@ class Explorer(Node):
         """ Convert map coordinates to occupancy grid cell coordinates """
         map_origin = self.grid.info.origin.position
         map_res = self.grid.info.resolution
-        return int((map_x - map_origin.x) / map_res), int((map_y - map_origin.y) / map_res)
+        return int(math.floor((map_x - map_origin.x) / map_res)), int(math.floor((map_y - map_origin.y) / map_res))
 
     def get_unknown_direction(self, map_x, map_y):
         """ Get the direction from a goal towards the unknown cells around it, so that the robot looks into the
